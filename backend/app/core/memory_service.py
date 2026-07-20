@@ -298,6 +298,7 @@ async def search_memory(
     owner_id: str,
     query: str,
     company_id: str | None = "any",
+    project_id: str | None = None,
     kind: str | None = None,
     scope: str | None = None,
     limit: int = 10,
@@ -319,6 +320,8 @@ async def search_memory(
         q = q.filter(MemoryEntry.company_id.is_(None))
     else:
         q = q.filter(or_(MemoryEntry.company_id == company_id, MemoryEntry.company_id.is_(None)))
+    if project_id:
+        q = q.filter(MemoryEntry.project_id == project_id)
     if kind:
         if kind not in MEMORY_KINDS:
             raise ValidationError(f"Unknown memory kind '{kind}'. Valid: {', '.join(MEMORY_KINDS)}")

@@ -29,6 +29,8 @@ import type {
   PluginSettingRead,
   Product,
   ProjectSummary,
+  ProjectOverview,
+  ProjectEvent,
   Client,
   ShopifyStatus,
   WorkspaceArtifact,
@@ -191,7 +193,30 @@ export const api = {
       `/plugins/${name}/run`,
       { method: "POST", body: { args } }
     ),
-  listProjects: () => apiRequest<ProjectSummary[]>("/projects"),
+  // Projects — the durable, company-scoped shared container every Quick
+  // Action attaches to. `companyId`: omit for all, "none" for null-company,
+  // or a real company id (mirrors the workspaces/clients sentinel).
+  listProjects: (companyId?: string | "none") => {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : "";
+    return apiRequest<ProjectSummary[]>(`/projects${qs}`);
+  },
+  getDefaultProject: (companyId?: string | null, clientId?: string | null) => {
+    const qs = new URLSearchParams();
+    if (companyId) qs.set("company_id", companyId);
+    if (clientId) qs.set("client_id", clientId);
+    const q = qs.toString();
+    return apiRequest<ProjectSummary>(`/projects/default${q ? `?${q}` : ""}`);
+  },
+  createProject: (payload: {
+    name: string;
+    description?: string;
+    company_id?: string | null;
+    client_id?: string | null;
+  }) => apiRequest<ProjectSummary>("/projects", { method: "POST", body: payload }),
+  getProject: (id: string) => apiRequest<ProjectSummary>(`/projects/${id}`),
+  getProjectOverview: (id: string) => apiRequest<ProjectOverview>(`/projects/${id}/overview`),
+  getProjectTimeline: (id: string, limit?: number) =>
+    apiRequest<ProjectEvent[]>(`/projects/${id}/timeline${limit ? `?limit=${limit}` : ""}`),
   listIntegrations: (companyId?: string) => {
     const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : "";
     return apiRequest<IntegrationStatus[]>(`/integrations${qs}`);
@@ -383,6 +408,7 @@ export const api = {
   createWorkspace: (payload: {
     action: string;
     company_id?: string | null;
+    project_id?: string | null;
     title?: string;
     mode?: "new" | "improve" | "client";
     source_url?: string | null;
@@ -435,6 +461,7 @@ export const api = {
   searchMemory: (params: {
     q?: string;
     companyId?: string | "any" | "global";
+    projectId?: string;
     kind?: MemoryKind;
     scope?: MemoryScope;
     limit?: number;
@@ -442,6 +469,7 @@ export const api = {
     const qs = new URLSearchParams();
     if (params.q) qs.set("q", params.q);
     qs.set("company_id", params.companyId ?? "any");
+    if (params.projectId) qs.set("project_id", params.projectId);
     if (params.kind) qs.set("kind", params.kind);
     if (params.scope) qs.set("scope", params.scope);
     if (params.limit) qs.set("limit", String(params.limit));
@@ -505,9 +533,12 @@ export const api = {
 
   // Approvals — the human-in-the-loop queue every capability's
   // side-effecting actions go through before anything external happens.
-  listApprovals: (params: { companyId?: string | "any"; status?: ApprovalStatus } = {}) => {
+  listApprovals: (
+    params: { companyId?: string | "any"; projectId?: string; status?: ApprovalStatus } = {}
+  ) => {
     const qs = new URLSearchParams();
     qs.set("company_id", params.companyId ?? "any");
+    if (params.projectId) qs.set("project_id", params.projectId);
     if (params.status) qs.set("status", params.status);
     return apiRequest<ApprovalRequestView[]>(`/approvals?${qs.toString()}`);
   },

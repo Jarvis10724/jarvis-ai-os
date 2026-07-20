@@ -75,6 +75,7 @@ async def search(
     company_id: str | None = Query(
         "any", description="'any' = everything, 'global' = non-company memory only, or a real company id."
     ),
+    project_id: str | None = Query(None, description="Narrow to memory attached to one Project."),
     kind: str | None = Query(None),
     scope: str | None = Query(None, description="Narrow to exactly one of MEMORY_SCOPES."),
     limit: int = Query(20, le=100),
@@ -92,6 +93,7 @@ async def search(
         owner_id=current_user.id,
         query=q,
         company_id=scoped_company_id,
+        project_id=project_id,
         kind=kind,
         scope=scope,
         limit=limit,

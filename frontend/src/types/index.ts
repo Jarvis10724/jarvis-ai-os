@@ -115,6 +115,90 @@ export interface ProjectSummary {
   name: string;
   description: string | null;
   status: string;
+  company_id: string | null;
+  client_id: string | null;
+  is_default: boolean;
+}
+
+// One Project Timeline entry (append-only activity log).
+export interface ProjectEvent {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+  source: string;
+  ref_id: string | null;
+  created_at: string | null;
+}
+
+// The nine buckets a Project contains, aggregated from everything attached to
+// it (see backend app.core.project_service.build_project_overview).
+export interface ProjectOverview {
+  project: ProjectSummary & {
+    description: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+  };
+  counts: Record<
+    | "conversations"
+    | "files"
+    | "images"
+    | "components"
+    | "research"
+    | "tasks"
+    | "approvals"
+    | "timeline"
+    | "memory",
+    number
+  >;
+  conversations: {
+    session_id: string;
+    action: string;
+    action_label: string;
+    title: string;
+    message_count: number;
+    updated_at: string | null;
+  }[];
+  files: {
+    session_id: string;
+    action: string;
+    path: string | null;
+    language?: string | null;
+    kind?: string | null;
+    source: string;
+  }[];
+  images: {
+    session_id: string;
+    action: string;
+    id: string | null;
+    name: string | null;
+    data_url: string | null;
+    status: string | null;
+  }[];
+  components: {
+    session_id: string;
+    path: string | null;
+    language: string | null;
+    description: string | null;
+  }[];
+  research: {
+    session_id: string;
+    title: string;
+    source_count: number;
+    citation_count: number;
+    has_report: boolean;
+    report_excerpt: string | null;
+  }[];
+  tasks: { id: string; title: string; status: string; due_date: string | null }[];
+  approvals: {
+    id: string;
+    capability_name: string;
+    action_type: string;
+    status: string;
+    created_at: string | null;
+  }[];
+  memory: { id: string; kind: string; title: string; scope: string; created_at: string | null }[];
+  timeline: ProjectEvent[];
 }
 
 export interface MemoryLinkView {

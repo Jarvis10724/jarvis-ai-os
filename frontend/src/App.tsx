@@ -26,6 +26,7 @@ import BusinessIdeaIncubatorPage from "@/pages/Ideas";
 import InvestmentDashboardPage from "@/pages/Investments";
 import Login from "@/pages/Login";
 import MemoryPage from "@/pages/Memory";
+import ProjectWorkspacePage from "@/pages/ProjectWorkspace";
 import StudioPage from "@/pages/Studio";
 
 // Single auth gate + shell for the whole authenticated route tree, instead
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/investments" element={<InvestmentDashboardPage />} />
         <Route path="/ideas" element={<BusinessIdeaIncubatorPage />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/projects/:id" element={<ProjectWorkspacePage />} />
         <Route path="/studio/:action" element={<StudioPage />} />
         <Route path="/memory" element={<MemoryPage />} />
         <Route path="/plugins" element={<PluginsPage />} />

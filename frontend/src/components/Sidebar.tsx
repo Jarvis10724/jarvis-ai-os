@@ -26,6 +26,7 @@ import { motion } from "framer-motion";
 import clsx from "clsx";
 
 import CompanySwitcher from "@/components/CompanySwitcher";
+import ProjectSwitcher from "@/components/ProjectSwitcher";
 import JarvisCore from "@/components/JarvisCore";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
@@ -184,6 +185,7 @@ export default function Sidebar() {
     <aside className="hidden w-72 shrink-0 flex-col border-r border-jarvis-border/60 bg-jarvis-panel/50 backdrop-blur-2xl md:flex">
       <SidebarBrand />
       <CompanySwitcher />
+      <ProjectSwitcher />
       <SidebarNav />
       <SystemLoadCard />
     </aside>

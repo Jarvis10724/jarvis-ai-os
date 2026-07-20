@@ -58,6 +58,7 @@ class ApprovalCreate(BaseModel):
     action_type: str
     payload: dict = {}
     company_id: str | None = None
+    project_id: str | None = None
 
 
 class ApprovalDecision(BaseModel):
@@ -154,9 +155,12 @@ def list_approvals(
     current_user: CurrentUser,
     db: Session = Depends(get_db),
     company_id: str | None = Query("any"),
+    project_id: str | None = Query(None),
     status: str | None = Query(None),
 ):
-    return capability_service.list_approvals(db, owner_id=current_user.id, company_id=company_id, status=status)
+    return capability_service.list_approvals(
+        db, owner_id=current_user.id, company_id=company_id, project_id=project_id, status=status
+    )
 
 
 @approvals_router.post("", status_code=201)
@@ -173,6 +177,7 @@ def create_approval(payload: ApprovalCreate, current_user: CurrentUser, db: Sess
         action_type=payload.action_type,
         payload=payload.payload,
         company_id=payload.company_id,
+        project_id=payload.project_id,
         requested_by=current_user.id,
     )
 

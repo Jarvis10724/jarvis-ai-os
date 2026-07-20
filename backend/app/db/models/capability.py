@@ -99,6 +99,10 @@ class ApprovalRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     company_id: Mapped[str | None] = mapped_column(ForeignKey("companies.id"), nullable=True, index=True)
+    #: The Project this approval rolls up to, if it was proposed inside a
+    #: project's work. Null for company-level approvals (e.g. an ad-hoc Gmail
+    #: send from the Gmail page) that aren't tied to a specific project.
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     capability_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     action_type: Mapped[str] = mapped_column(String(50), nullable=False)
     # The proposed call's arguments, e.g. {"to": "...", "subject": "...",

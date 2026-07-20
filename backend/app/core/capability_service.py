@@ -131,6 +131,7 @@ def serialize_approval(req: ApprovalRequest) -> dict:
         "id": req.id,
         "capability_name": req.capability_name,
         "company_id": req.company_id,
+        "project_id": req.project_id,
         "action_type": req.action_type,
         "payload": json.loads(req.payload_json) if req.payload_json else None,
         "status": req.status,
@@ -340,6 +341,7 @@ def propose_action(
     action_type: str,
     payload: dict,
     company_id: str | None = None,
+    project_id: str | None = None,
     requested_by: str | None = None,
 ) -> dict:
     capability_def = get_capability(capability_name)
@@ -360,6 +362,7 @@ def propose_action(
     req = ApprovalRequest(
         owner_id=owner_id,
         company_id=company_id,
+        project_id=project_id,
         capability_name=capability_name,
         action_type=action_type,
         payload_json=json.dumps(payload),
@@ -474,7 +477,14 @@ def mark_executed(db: Session, *, owner_id: str, request_id: str, result_note: s
     return after
 
 
-def list_approvals(db: Session, *, owner_id: str, company_id: str | None = "any", status: str | None = None) -> list[dict]:
+def list_approvals(
+    db: Session,
+    *,
+    owner_id: str,
+    company_id: str | None = "any",
+    project_id: str | None = None,
+    status: str | None = None,
+) -> list[dict]:
     q = db.query(ApprovalRequest).filter(ApprovalRequest.owner_id == owner_id)
     if company_id == "any":
         pass
@@ -482,6 +492,8 @@ def list_approvals(db: Session, *, owner_id: str, company_id: str | None = "any"
         q = q.filter(ApprovalRequest.company_id.is_(None))
     else:
         q = q.filter(ApprovalRequest.company_id == company_id)
+    if project_id:
+        q = q.filter(ApprovalRequest.project_id == project_id)
     if status:
         if status not in APPROVAL_STATUSES:
             raise ValidationError(f"Unknown status '{status}'. Valid: {', '.join(APPROVAL_STATUSES)}")

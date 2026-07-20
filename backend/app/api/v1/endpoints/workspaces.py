@@ -24,6 +24,7 @@ from app.ai_providers.base import Message
 from app.ai_providers.factory import get_ai_provider, get_image_provider
 from app.auth.dependencies import CurrentUser
 from app.core import memory_service
+from app.core import project_service
 from app.core import search_service
 from app.core import website_analyzer
 from app.core import website_builder
@@ -51,6 +52,11 @@ class WorkspaceCreate(BaseModel):
     action: str
     company_id: str | None = None
     title: str | None = None
+    #: The Project this Quick Action should attach to. When omitted, the
+    #: session attaches to the business's default project (get-or-create), so
+    #: all Quick Actions in a business roll into the same shared Project instead
+    #: of each minting its own.
+    project_id: str | None = None
     #: Website Builder mode: "new" (default) | "improve" | "client".
     mode: str | None = None
     #: For "improve" mode — the existing site to crawl/analyze and improve.
@@ -151,6 +157,20 @@ def _serialize(db: Session, s: WorkspaceSession, *, full: bool) -> dict:
             {"id": t.id, "title": t.title, "status": t.status, "due_date": t.due_date} for t in tasks
         ]
     return data
+
+
+def _session_event(db: Session, s: WorkspaceSession, *, kind: str, title: str, detail: str | None = None, ref_id: str | None = None) -> None:
+    """Record a Timeline event on a session's project (best-effort — a session
+    always has a project_id now, but stay defensive for legacy rows)."""
+    if not s.project_id:
+        return
+    project = db.query(Project).filter(Project.id == s.project_id).first()
+    if not project:
+        return
+    project_service.record_project_event(
+        db, project=project, owner_id=s.owner_id, kind=kind, title=title,
+        source=s.action, detail=detail, ref_id=ref_id,
+    )
 
 
 def _create_task(db: Session, *, owner_id, company_id, project_id, title, status) -> Task:
@@ -255,23 +275,28 @@ def create_session(payload: WorkspaceCreate, current_user: CurrentUser, db: Sess
         else:
             title = f"New {action.label}"
 
-    # Attach to a real Project so workspace output lives in Project Manager too.
-    # Client builds tag the project with client_id and name it for the client,
-    # keeping client work separate from the company's own.
-    project_name = f"{action.label}: {title}"
-    if client:
-        project_name = f"{client.name} — {action.label}: {title}"
-    project = Project(
-        owner_id=current_user.id,
-        name=project_name[:255],
-        description=f"Auto-created by the {action.label} workspace"
-        + (f" for client {client.name}." if client else "."),
-        status="active",
-        client_id=client.id if client else None,
-    )
-    db.add(project)
-    db.commit()
-    db.refresh(project)
+    # Attach to the shared Project for this business instead of minting a
+    # throwaway one per session. If the caller named an active project, use it
+    # (validated as owned + same company/client); otherwise get-or-create the
+    # business's default project. Client builds resolve the client's own
+    # default project, keeping client work separate from the company's own.
+    if payload.project_id:
+        project = (
+            db.query(Project)
+            .filter(Project.id == payload.project_id, Project.owner_id == current_user.id)
+            .first()
+        )
+        if not project:
+            raise NotFoundError(f"Project '{payload.project_id}' not found")
+        if project.company_id and payload.company_id and project.company_id != payload.company_id:
+            raise ValidationError("Project belongs to a different business.")
+    else:
+        project = project_service.get_or_create_default_project(
+            db,
+            owner_id=current_user.id,
+            company_id=payload.company_id,
+            client_id=client.id if client else None,
+        )
 
     initial_state: dict = {}
     if payload.action == "web_builder":
@@ -303,6 +328,17 @@ def create_session(payload: WorkspaceCreate, current_user: CurrentUser, db: Sess
         project_id=project.id,
         title=f"Define the {action.memory_noun} brief",
         status="backlog",
+    )
+
+    # Record the new session on the project's Timeline.
+    project_service.record_project_event(
+        db,
+        project=project,
+        owner_id=current_user.id,
+        kind="session_created",
+        title=f"Started {action.label}: {title}",
+        source=payload.action,
+        ref_id=session.id,
     )
 
     return _serialize(db, session, full=True)
@@ -357,6 +393,7 @@ def save_artifact(
     arts.append(artifact)
     s.artifacts_json = json.dumps(arts)
     db.commit()
+    _session_event(db, s, kind="artifact_saved", title=f"Saved {payload.title}", ref_id=artifact["id"])
     return artifact
 
 
@@ -392,6 +429,7 @@ def add_task(session_id: str, payload: TaskIn, current_user: CurrentUser, db: Se
         title=payload.title,
         status=payload.status,
     )
+    _session_event(db, s, kind="task_created", title=f"Task: {payload.title}", ref_id=task.id)
     return {"id": task.id, "title": task.title, "status": task.status, "due_date": task.due_date}
 
 
@@ -453,6 +491,7 @@ async def generate_image(
     state["images"] = images
     s.state_json = json.dumps(state)
     db.commit()
+    _session_event(db, s, kind="image_generated", title=f"Generated image: {title}", ref_id=artifact["id"])
 
     return {"configured": True, "image": {**artifact, "concept_id": payload.concept_id}}
 
@@ -690,6 +729,20 @@ async def build_website(
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("website_build_memory_failed", error=str(exc))
+
+            if project_id:
+                try:
+                    built_project = wdb.query(Project).filter(Project.id == project_id).first()
+                    if built_project:
+                        project_service.record_project_event(
+                            wdb, project=built_project, owner_id=owner_id,
+                            kind="website_built", source="web_builder",
+                            title=f"Built {len(pages)}-page site for {company_name or 'the business'}",
+                            detail=f"{len(files)} component files, {len(imgs)} images.",
+                            ref_id=session_id,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("website_build_timeline_failed", error=str(exc))
 
             yield _sse({"type": "done", "phase": "build", "pages": len(pages), "files": len(files), "images": len(imgs)})
         except Exception as exc:  # noqa: BLE001

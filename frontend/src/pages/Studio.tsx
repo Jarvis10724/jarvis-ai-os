@@ -25,6 +25,7 @@ import clsx from "clsx";
 import { api, ApiError, streamWorkspaceMessage } from "@/api/client";
 import MarkdownLite from "@/components/MarkdownLite";
 import { useCompany } from "@/context/CompanyContext";
+import { useProject } from "@/context/ProjectContext";
 import { useToast } from "@/context/ToastContext";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
 import { AutomationBanner, StagePanel, stageHasValue, type PanelCtx } from "@/pages/studio/panels";
@@ -60,6 +61,7 @@ export default function StudioPage() {
   const { action = "" } = useParams();
   const meta = QUICK_ACTIONS.find((a) => a.pluginName === action);
   const { activeCompany, activeCompanyId } = useCompany();
+  const { activeProjectId } = useProject();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -179,7 +181,14 @@ export default function StudioPage() {
     client_id?: string;
   }): Promise<WorkspaceDetail | null> {
     try {
-      const created = await api.createWorkspace({ action, company_id: activeCompanyId, ...opts });
+      // Attach to the active shared Project (client mode resolves its own
+      // client project server-side, so don't force the active one there).
+      const created = await api.createWorkspace({
+        action,
+        company_id: activeCompanyId,
+        project_id: opts?.mode === "client" ? null : activeProjectId,
+        ...opts,
+      });
       setSessions((prev) => [{ ...created }, ...prev]);
       setDetail(created);
       setSaveState("idle");

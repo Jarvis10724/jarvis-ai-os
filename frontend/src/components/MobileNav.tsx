@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 
 import CompanySwitcher from "@/components/CompanySwitcher";
+import ProjectSwitcher from "@/components/ProjectSwitcher";
 import { SidebarBrand, SidebarNav, SystemLoadCard } from "@/components/Sidebar";
 
 export default function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -33,6 +34,7 @@ export default function MobileNav({ open, onClose }: { open: boolean; onClose: (
               </button>
             </div>
             <CompanySwitcher />
+            <ProjectSwitcher />
             <SidebarNav onNavigate={onClose} />
             <SystemLoadCard />
           </motion.aside>

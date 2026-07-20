@@ -6,6 +6,7 @@ import App from "@/App";
 import { AssistantStatusProvider } from "@/context/AssistantStatusContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { CompanyProvider } from "@/context/CompanyContext";
+import { ProjectProvider } from "@/context/ProjectContext";
 import { PromptProvider } from "@/context/PromptContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/context/ToastContext";
@@ -20,9 +21,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <PromptProvider>
             <AuthProvider>
               <CompanyProvider>
-                <AssistantStatusProvider>
-                  <App />
-                </AssistantStatusProvider>
+                <ProjectProvider>
+                  <AssistantStatusProvider>
+                    <App />
+                  </AssistantStatusProvider>
+                </ProjectProvider>
               </CompanyProvider>
             </AuthProvider>
           </PromptProvider>
