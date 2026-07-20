@@ -28,6 +28,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
 import { AutomationBanner, StagePanel, type PanelCtx } from "@/pages/studio/panels";
+import WebsiteBuildBar from "@/pages/studio/WebsiteBuildBar";
 import type { WorkspaceDetail, WorkspaceSummary } from "@/types";
 
 function lastSessionKey(action: string, companyId: string | null): string {
@@ -478,6 +479,21 @@ export default function StudioPage() {
           </div>
           <SaveBadge state={saveState} savedAt={savedAt} />
         </div>
+
+        {action === "web_builder" && detail && (
+          <WebsiteBuildBar
+            sessionId={detail.id}
+            disabled={streaming}
+            onRefresh={async () => {
+              try {
+                const d = await api.getWorkspace(detail.id);
+                setDetail(d);
+              } catch {
+                /* ignore transient refresh errors */
+              }
+            }}
+          />
+        )}
 
         {saveState === "error" && lastAttempt && (
           <div className="flex items-center justify-between gap-2 border-b border-jarvis-rose/30 bg-jarvis-rose/10 px-5 py-2 text-xs text-jarvis-rose">

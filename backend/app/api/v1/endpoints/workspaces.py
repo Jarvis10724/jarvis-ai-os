@@ -24,6 +24,7 @@ from app.ai_providers.factory import get_ai_provider, get_image_provider
 from app.auth.dependencies import CurrentUser
 from app.core import memory_service
 from app.core import search_service
+from app.core import website_builder
 from app.core.workspace_actions import WORKSPACE_ACTIONS, build_system_prompt, get_action
 from app.core import workspace_state as ws
 from app.db.models.company import Company
@@ -426,11 +427,188 @@ def search_status(current_user: CurrentUser):
     }
 
 
-# --- Streaming message ----------------------------------------------------
+# --- Website build pipeline -----------------------------------------------
+
+
+class WebsiteBuildIn(BaseModel):
+    #: False = run the (safe) plan stages and stop at the approval gate.
+    #: True = the approved major action: generate images + React components + preview.
+    approved: bool = False
+    brief: str | None = None
 
 
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
+
+
+@router.post("/{session_id}/website/build")
+async def build_website(
+    session_id: str, payload: WebsiteBuildIn, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    """Run the Build a Website pipeline as live-progress SSE.
+
+    Phase 1 (always): plan the site — sitemap, layouts, copy, design — and stop
+    at an approval gate. Phase 2 (only when ``approved``): the major action —
+    generate images (real or labelled placeholders), real React component files,
+    and a runnable preview assembled from those components. Everything is saved
+    to the workspace state + versioned artifacts + Project Manager tasks as each
+    stage completes, so progress survives a disconnect."""
+    session = _owned_session(db, session_id, current_user.id)
+    if session.action != "web_builder":
+        raise ValidationError("The build pipeline only applies to the Website Studio.")
+
+    owner_id = current_user.id
+    company_id = session.company_id
+    project_id = session.project_id
+    approved = payload.approved
+    brief = (payload.brief or "").strip()
+    company_name = ""
+    if company_id:
+        company = db.query(Company).filter(Company.id == company_id).first()
+        company_name = company.name if company else ""
+
+    def _stage(stage, label, status, detail=""):
+        return _sse({"type": "stage", "stage": stage, "label": label, "status": status, "detail": detail})
+
+    async def event_stream():
+        provider = get_ai_provider()
+        wdb = SessionLocal()
+        try:
+            s = wdb.query(WorkspaceSession).filter(WorkspaceSession.id == session_id).first()
+            state = ws.load_json(s.state_json, {})
+
+            def save_state():
+                s.state_json = json.dumps(state)
+                wdb.commit()
+
+            def add_artifact(title, content, kind, stage):
+                arts = ws.load_json(s.artifacts_json, [])
+                arts.append(
+                    ws.make_artifact(
+                        title=title, content=content, kind=kind, stage=stage,
+                        version=ws.next_version(arts, title),
+                    )
+                )
+                s.artifacts_json = json.dumps(arts)
+                wdb.commit()
+
+            # --- Phase 1: plan (safe) ---
+            need_plan = not state.get("sitemap") or bool(brief)
+            if need_plan:
+                yield _stage("plan", "Planning sitemap, layouts & copy", "running")
+                seed = brief or state.get("requirements") or "Build a marketing website for this business."
+                plan = await website_builder.plan_site(provider, seed, company_name, state)
+                if not plan.get("sitemap"):
+                    yield _stage("plan", "Planning sitemap, layouts & copy", "error", "The planner returned no pages.")
+                    yield _sse({"type": "error", "message": "Planning failed — check the AI provider/key and try again."})
+                    return
+                for k in ("sitemap", "layouts", "copy", "design"):
+                    if plan.get(k):
+                        state[k] = plan[k]
+                if brief:
+                    state["requirements"] = brief
+                save_state()
+                add_artifact("Site plan", json.dumps(plan, indent=2)[:8000], "document", "plan")
+                pages = state.get("sitemap") or []
+                for p in pages:
+                    _create_task(
+                        wdb, owner_id=owner_id, company_id=company_id, project_id=project_id,
+                        title=f"Page: {p.get('title') or p.get('path')}", status="review",
+                    )
+                yield _stage("plan", "Planning sitemap, layouts & copy", "done", f"{len(pages)} pages")
+
+            pages = state.get("sitemap") or []
+
+            # --- Approval gate before the major action ---
+            if not approved:
+                yield _sse(
+                    {
+                        "type": "awaiting_approval",
+                        "summary": f"Plan ready — {len(pages)} pages. Approve to generate images, React components, and a live preview.",
+                        "major_actions": [
+                            f"Generate {len(pages)} image(s) / placeholders",
+                            f"Generate React components for {len(pages)} page(s)",
+                            "Assemble a runnable preview",
+                        ],
+                    }
+                )
+                # awaiting_approval IS the terminal event for the plan phase;
+                # no `done` follows, so the client's approval gate stays up.
+                return
+
+            # --- Phase 2: the approved major action ---
+            pal = (state.get("design") or {}).get("palette") or []
+            palette_bg = pal[0]["hex"] if pal and isinstance(pal[0], dict) and pal[0].get("hex") else "#0b1220"
+
+            # Images (real or labelled placeholders) — components reference them.
+            yield _stage("images", "Generating images", "running")
+            imgs: list[dict] = []
+            any_generated = False
+            async for rec, generated in website_builder.generate_images(state, company_name, palette_bg=palette_bg):
+                imgs.append(rec)
+                any_generated = any_generated or generated
+                add_artifact(f"{rec['role']} — {rec['page']}", rec["data_url"], "image", "images")
+                yield _stage("images", "Generating images", "running", f"{len(imgs)}/{len(pages)} · {rec['status']}")
+            state["images"] = imgs
+            save_state()
+            _create_task(
+                wdb, owner_id=owner_id, company_id=company_id, project_id=project_id,
+                title=f"Images ({len(imgs)})", status="review",
+            )
+            yield _stage("images", "Generating images", "done", f"{len(imgs)} ({'generated' if any_generated else 'placeholders'})")
+
+            # React components (real files).
+            yield _stage("components", "Generating React components", "running")
+            comp = await website_builder.generate_components(provider, state, company_name)
+            files = comp.get("files") or []
+            if not files:
+                yield _stage("components", "Generating React components", "error", "No files returned.")
+                yield _sse({"type": "error", "message": "Component generation failed — check the AI provider/key and try again."})
+                return
+            state["components"] = comp
+            for f in files:
+                add_artifact(f.get("path") or "component.jsx", f.get("content") or "", "code", "components")
+            save_state()
+            _create_task(
+                wdb, owner_id=owner_id, company_id=company_id, project_id=project_id,
+                title=f"React components ({len(files)} files)", status="review",
+            )
+            yield _stage("components", "Generating React components", "done", f"{len(files)} files")
+
+            # Runnable preview assembled from the actual components.
+            yield _stage("preview", "Assembling runnable preview", "running")
+            preview_html = website_builder.assemble_preview(files, imgs)
+            state["preview_html"] = preview_html
+            save_state()
+            add_artifact("Preview (index.html)", preview_html, "document", "preview")
+            yield _stage("preview", "Assembling runnable preview", "done")
+
+            try:
+                await memory_service.record_memory(
+                    wdb, owner_id=owner_id, kind="decision",
+                    title=f"Website Studio: built site for {company_name or 'the business'}",
+                    content=(
+                        f"Built a {len(pages)}-page React site. Pages: "
+                        + ", ".join(p.get("title") or p.get("path") for p in pages)
+                        + f". Components: {len(files)} files. Images: {len(imgs)}."
+                    ),
+                    scope="company" if company_id else "organization",
+                    company_id=company_id, project_id=project_id, source="workspace",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("website_build_memory_failed", error=str(exc))
+
+            yield _sse({"type": "done", "phase": "build", "pages": len(pages), "files": len(files), "images": len(imgs)})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("website_build_failed", session_id=session_id, error=str(exc))
+            yield _sse({"type": "error", "message": "The website build failed — check the AI provider/key."})
+        finally:
+            wdb.close()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# --- Streaming message ----------------------------------------------------
 
 
 async def _structure_state(action, request_text: str, deliverable_text: str) -> dict | None:

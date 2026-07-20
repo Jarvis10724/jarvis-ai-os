@@ -585,3 +585,79 @@ export function streamWorkspaceMessage(
   })();
   return () => controller.abort();
 }
+
+// --- Build a Website pipeline (SSE) ---------------------------------------
+
+export interface WebsiteBuildStage {
+  stage: string;
+  label: string;
+  status: "running" | "done" | "error";
+  detail?: string;
+}
+
+export interface WebsiteBuildHandlers {
+  onStage: (s: WebsiteBuildStage) => void;
+  onAwaitingApproval: (p: { summary: string; major_actions: string[] }) => void;
+  onDone: (p: { phase: string; pages?: number; files?: number; images?: number }) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * Runs the Build a Website pipeline and streams live progress. With
+ * `approved:false` it plans the site and stops at the approval gate; with
+ * `approved:true` it runs the major action (images + React components +
+ * preview). Returns an abort function.
+ */
+export function streamWebsiteBuild(
+  sessionId: string,
+  opts: { approved: boolean; brief?: string | null },
+  handlers: WebsiteBuildHandlers
+): () => void {
+  const controller = new AbortController();
+  (async () => {
+    try {
+      const token = getToken();
+      const resp = await fetch(`${API_BASE}/workspaces/${sessionId}/website/build`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ approved: opts.approved, brief: opts.brief ?? null }),
+        signal: controller.signal,
+      });
+      if (!resp.ok || !resp.body) {
+        handlers.onError(`Build request failed (${resp.status}).`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line.slice(5).trim());
+            if (event.type === "stage") handlers.onStage(event as WebsiteBuildStage);
+            else if (event.type === "awaiting_approval") handlers.onAwaitingApproval(event);
+            else if (event.type === "done") handlers.onDone(event);
+            else if (event.type === "error") handlers.onError(event.message);
+          } catch {
+            // ignore malformed frame
+          }
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        handlers.onError(err instanceof Error ? err.message : "Build stream failed.");
+      }
+    }
+  })();
+  return () => controller.abort();
+}

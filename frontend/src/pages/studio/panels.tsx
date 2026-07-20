@@ -284,14 +284,58 @@ function renderContent(stateKey: string, value: unknown, ctx: PanelCtx): React.R
     }
     case "preview_html": {
       const html = asStr(value);
+      // allow-scripts (without allow-same-origin) so the generated React app
+      // actually runs, sandboxed to a null origin — it can't reach the parent.
       return (
         <div className="overflow-hidden rounded-xl border border-jarvis-border/70">
           <iframe
             title="Site preview"
-            sandbox=""
+            sandbox="allow-scripts"
             srcDoc={html}
-            className="h-96 w-full bg-white"
+            className="h-[28rem] w-full bg-white"
           />
+        </div>
+      );
+    }
+    case "layouts": {
+      const obj = asObj(value);
+      return (
+        <div className="space-y-2">
+          {Object.entries(obj).map(([path, v]) => (
+            <Card key={path}>
+              <p className="mb-1.5 text-xs font-semibold text-jarvis-cyan">{path}</p>
+              <ol className="space-y-1.5">
+                {asArray(asObj(v).sections).map((s, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs">
+                    <span className="shrink-0 rounded bg-jarvis-panel2 px-1.5 py-0.5 text-[9px] uppercase text-jarvis-faint">
+                      {asStr(s.type) || "section"}
+                    </span>
+                    <div>
+                      <span className="font-medium text-jarvis-text">{asStr(s.name)}</span>
+                      {asStr(s.description) && <span className="text-jarvis-muted"> — {asStr(s.description)}</span>}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </Card>
+          ))}
+        </div>
+      );
+    }
+    case "components": {
+      const files = asArray(asObj(value).files);
+      return (
+        <div className="space-y-2">
+          {files.map((f, i) => (
+            <Card key={i}>
+              <div className="mb-1 flex items-center gap-1.5">
+                <FileCode2 className="h-3.5 w-3.5 text-jarvis-cyan" />
+                <code className="text-xs text-jarvis-text">{asStr(f.path)}</code>
+              </div>
+              {asStr(f.description) && <p className="mb-1.5 text-[11px] text-jarvis-muted">{asStr(f.description)}</p>}
+              <CodeBlock language={asStr(f.language)} content={asStr(f.content)} />
+            </Card>
+          ))}
         </div>
       );
     }
@@ -346,17 +390,34 @@ function renderContent(stateKey: string, value: unknown, ctx: PanelCtx): React.R
       );
     }
     case "images": {
-      // Images live in state.images (populated by the /image endpoint).
+      // state.images is shared by the Logo generator ({name}) and the Website
+      // build pipeline ({role, page, alt, status}). Render both.
       const imgs = asArray(ctx.detail.state.images);
       if (!imgs.length) return null;
       return (
         <div className="grid grid-cols-2 gap-2">
-          {imgs.map((im, i) => (
-            <figure key={i} className="overflow-hidden rounded-xl border border-jarvis-border/70 bg-jarvis-panel2/40">
-              <img src={asStr(im.data_url)} alt={asStr(im.name)} className="aspect-square w-full object-contain bg-white/5" />
-              <figcaption className="truncate px-2 py-1 text-[10px] text-jarvis-muted">{asStr(im.name)}</figcaption>
-            </figure>
-          ))}
+          {imgs.map((im, i) => {
+            const label = asStr(im.name) || asStr(im.alt) || [asStr(im.role), asStr(im.page)].filter(Boolean).join(" · ");
+            const placeholder = asStr(im.status) === "placeholder";
+            return (
+              <figure key={i} className="overflow-hidden rounded-xl border border-jarvis-border/70 bg-jarvis-panel2/40">
+                <div className="relative">
+                  <img src={asStr(im.data_url)} alt={label} className="aspect-[1200/630] w-full object-cover bg-white/5" />
+                  {asStr(im.status) && (
+                    <span
+                      className={clsx(
+                        "absolute right-1 top-1 rounded-full px-1.5 py-0.5 text-[8px] font-semibold uppercase",
+                        placeholder ? "bg-jarvis-amber/20 text-jarvis-amber" : "bg-jarvis-emerald/20 text-jarvis-emerald"
+                      )}
+                    >
+                      {placeholder ? "Placeholder" : "Generated"}
+                    </span>
+                  )}
+                </div>
+                <figcaption className="truncate px-2 py-1 text-[10px] text-jarvis-muted">{label}</figcaption>
+              </figure>
+            );
+          })}
         </div>
       );
     }
