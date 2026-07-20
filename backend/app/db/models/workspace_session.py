@@ -40,6 +40,8 @@ class WorkspaceSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     action: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    #: Set for "Build Client Website" sessions so the work is scoped to a Client.
+    client_id: Mapped[str | None] = mapped_column(ForeignKey("clients.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="active")  # active | archived
     messages_json: Mapped[str] = mapped_column(Text, default="[]")
     artifacts_json: Mapped[str] = mapped_column(Text, default="[]")

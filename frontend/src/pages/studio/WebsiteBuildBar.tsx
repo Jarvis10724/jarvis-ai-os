@@ -1,70 +1,185 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { AlertTriangle, Check, Hammer, Loader2, ShieldCheck, Sparkles, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Globe,
+  Hammer,
+  Loader2,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  X,
+} from "lucide-react";
 
-import { streamWebsiteBuild, type WebsiteBuildStage } from "@/api/client";
+import { api, ApiError, streamWebsiteBuild, type WebsiteBuildStage } from "@/api/client";
+import type { Client } from "@/types";
 
-type Phase = "idle" | "planning" | "awaiting_approval" | "generating" | "done" | "error";
+type Phase = "idle" | "analyzing" | "planning" | "awaiting_approval" | "generating" | "done" | "error";
+type Mode = "new" | "improve" | "client";
 
-const STAGE_ORDER = ["plan", "images", "components", "preview"];
+const STAGE_ORDER = ["analyze", "plan", "images", "components", "preview"];
+
+interface SessionInfo {
+  id: string;
+  mode?: string | null;
+  source_url?: string | null;
+  client_id?: string | null;
+}
 
 /**
- * Drives the Build a Website pipeline: a single "Build Website" button plans the
- * site (live progress), then presents an approval gate before the major action
- * (images + React components + preview). Refreshes the workspace panels as each
- * stage completes. Self-contained so Studio stays generic.
+ * Build a Website control with the three modes:
+ *  - New: build a fresh site for the active company.
+ *  - Improve Existing: crawl a URL and produce an improved site.
+ *  - Client: build under a selected/created Client, kept separate.
+ * Picking a mode different from the current session (or new params) spins up a
+ * fresh, correctly-scoped session+project before building. Streams live
+ * progress and gates the major generation behind approval.
  */
 export default function WebsiteBuildBar({
-  sessionId,
+  session,
+  companyId,
+  onCreateModeSession,
   onRefresh,
   disabled,
 }: {
-  sessionId: string;
-  onRefresh: () => void;
+  session: SessionInfo;
+  companyId: string | null;
+  onCreateModeSession: (opts: { mode: Mode; source_url?: string; client_id?: string }) => Promise<string | null>;
+  onRefresh: (sessionId: string) => void;
   disabled?: boolean;
 }) {
+  const [mode, setMode] = useState<Mode>((session.mode as Mode) || "new");
+  const [url, setUrl] = useState(session.source_url || "");
+  const [clientId, setClientId] = useState(session.client_id || "");
+  const [clients, setClients] = useState<Client[]>([]);
+  const [newClientName, setNewClientName] = useState("");
+  const [showNewClient, setShowNewClient] = useState(false);
+
   const [phase, setPhase] = useState<Phase>("idle");
-  const [brief, setBrief] = useState("");
   const [stages, setStages] = useState<Record<string, WebsiteBuildStage>>({});
   const [approval, setApproval] = useState<{ summary: string; major_actions: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
+  const buildIdRef = useRef<string>(session.id);
+  // True while WE are creating a session mid-build, so the session.id change we
+  // triggered doesn't reset/abort the in-flight build.
+  const selfCreatedRef = useRef(false);
 
-  // Reset when switching sessions; cancel any in-flight build.
+  // Reset build UI + re-sync selectors when the active session changes — unless
+  // the change was our own (a mode session we just created to build into).
   useEffect(() => {
+    if (selfCreatedRef.current) {
+      selfCreatedRef.current = false;
+      buildIdRef.current = session.id;
+      return;
+    }
     abortRef.current?.();
     abortRef.current = null;
     setPhase("idle");
     setStages({});
     setApproval(null);
     setError(null);
-  }, [sessionId]);
+    setMode((session.mode as Mode) || "new");
+    setUrl(session.source_url || "");
+    setClientId(session.client_id || "");
+    buildIdRef.current = session.id;
+  }, [session.id]);
   useEffect(() => () => abortRef.current?.(), []);
 
-  function run(approved: boolean) {
+  // Load clients for the active company (for Client mode).
+  useEffect(() => {
+    api
+      .listClients(companyId ?? "none")
+      .then(setClients)
+      .catch(() => setClients([]));
+  }, [companyId]);
+
+  async function createClientInline(): Promise<string | null> {
+    const name = newClientName.trim();
+    if (!name) return null;
+    try {
+      const c = await api.createClient({ name, company_id: companyId });
+      setClients((prev) => [c, ...prev]);
+      setClientId(c.id);
+      setNewClientName("");
+      setShowNewClient(false);
+      return c.id;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't create client.");
+      return null;
+    }
+  }
+
+  function validate(): string | null {
+    if (mode === "improve" && !url.trim()) return "Enter the URL of the existing website.";
+    if (mode === "client" && !clientId) return "Select or create a client first.";
+    return null;
+  }
+
+  // True when the selected mode/params differ from the current session, so a
+  // fresh mode-scoped session must be created before building.
+  function needsNewSession(): boolean {
+    const curMode = (session.mode as Mode) || "new";
+    if (mode !== curMode) return true;
+    if (mode === "improve" && url.trim() !== (session.source_url || "")) return true;
+    if (mode === "client" && clientId !== (session.client_id || "")) return true;
+    return false;
+  }
+
+  async function run(approved: boolean) {
+    const v = validate();
+    if (v) {
+      setError(v);
+      setPhase("error");
+      return;
+    }
     setError(null);
     setApproval(null);
     setStages({});
-    setPhase(approved ? "generating" : "planning");
+
+    // On the initial (plan) run, resolve the session we build into.
+    if (!approved) {
+      if (needsNewSession()) {
+        setPhase(mode === "improve" ? "analyzing" : "planning");
+        selfCreatedRef.current = true; // suppress the reset from the id change we cause
+        const newId = await onCreateModeSession({
+          mode,
+          source_url: mode === "improve" ? url.trim() : undefined,
+          client_id: mode === "client" ? clientId : undefined,
+        });
+        if (!newId) {
+          selfCreatedRef.current = false;
+          setError("Couldn't start the build session.");
+          setPhase("error");
+          return;
+        }
+        buildIdRef.current = newId;
+      } else {
+        buildIdRef.current = session.id;
+      }
+    }
+
+    setPhase(approved ? "generating" : mode === "improve" ? "analyzing" : "planning");
     abortRef.current = streamWebsiteBuild(
-      sessionId,
-      { approved, brief: brief.trim() || null },
+      buildIdRef.current,
+      { approved, brief: null },
       {
         onStage: (s) => {
           setStages((prev) => ({ ...prev, [s.stage]: s }));
-          if (s.status === "done") onRefresh();
+          if (s.status === "done") onRefresh(buildIdRef.current);
         },
         onAwaitingApproval: (p) => {
           setApproval(p);
           setPhase("awaiting_approval");
           abortRef.current = null;
-          onRefresh();
+          onRefresh(buildIdRef.current);
         },
         onDone: (p) => {
           abortRef.current = null;
-          onRefresh();
-          // Only the approved build finalizes; a plan-phase done must not
-          // override the approval gate.
+          onRefresh(buildIdRef.current);
           if (p.phase === "build") setPhase("done");
         },
         onError: (msg) => {
@@ -76,11 +191,99 @@ export default function WebsiteBuildBar({
     );
   }
 
-  const running = phase === "planning" || phase === "generating";
+  const running = phase === "planning" || phase === "generating" || phase === "analyzing";
   const orderedStages = STAGE_ORDER.map((k) => stages[k]).filter(Boolean) as WebsiteBuildStage[];
+  const MODES: { key: Mode; label: string; icon: typeof Globe }[] = [
+    { key: "new", label: "New", icon: Hammer },
+    { key: "improve", label: "Improve Existing", icon: RefreshCw },
+    { key: "client", label: "Client", icon: Users },
+  ];
 
   return (
     <div className="border-b border-jarvis-border/60 bg-jarvis-panel/30 px-5 py-3">
+      {/* Mode selector */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {MODES.map((m) => (
+          <button
+            key={m.key}
+            onClick={() => setMode(m.key)}
+            disabled={running}
+            className={clsx(
+              "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition disabled:opacity-50",
+              mode === m.key
+                ? "border-jarvis-cyan/50 bg-jarvis-cyan/15 text-jarvis-cyan"
+                : "border-jarvis-border text-jarvis-muted hover:text-jarvis-text"
+            )}
+          >
+            <m.icon className="h-3.5 w-3.5" />
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Mode-specific inputs */}
+      {mode === "improve" && (
+        <div className="mb-2 flex items-center gap-1.5">
+          <Globe className="h-3.5 w-3.5 shrink-0 text-jarvis-muted" />
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            disabled={running}
+            placeholder="Existing website URL to analyze & improve (e.g. acme.com)"
+            className="min-w-0 flex-1 rounded-lg border border-jarvis-border bg-jarvis-panel2/50 px-3 py-2 text-xs text-jarvis-text placeholder:text-jarvis-muted focus:border-jarvis-cyan/50 focus:outline-none"
+          />
+        </div>
+      )}
+      {mode === "client" && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <Users className="h-3.5 w-3.5 shrink-0 text-jarvis-muted" />
+          {showNewClient ? (
+            <>
+              <input
+                value={newClientName}
+                onChange={(e) => setNewClientName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createClientInline()}
+                autoFocus
+                placeholder="New client name"
+                className="min-w-0 flex-1 rounded-lg border border-jarvis-border bg-jarvis-panel2/50 px-3 py-2 text-xs text-jarvis-text placeholder:text-jarvis-muted focus:border-jarvis-cyan/50 focus:outline-none"
+              />
+              <button
+                onClick={createClientInline}
+                className="press-scale rounded-lg border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-2.5 py-2 text-[11px] font-semibold text-jarvis-emerald"
+              >
+                Create
+              </button>
+              <button onClick={() => setShowNewClient(false)} className="px-2 py-2 text-[11px] text-jarvis-muted">
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <select
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                disabled={running}
+                className="min-w-0 flex-1 rounded-lg border border-jarvis-border bg-jarvis-panel2/50 px-3 py-2 text-xs text-jarvis-text focus:border-jarvis-cyan/50 focus:outline-none"
+              >
+                <option value="">Select a client…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.project_count})
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => setShowNewClient(true)}
+                className="press-scale flex items-center gap-1 rounded-lg border border-jarvis-border px-2.5 py-2 text-[11px] font-semibold text-jarvis-muted hover:text-jarvis-cyan"
+              >
+                <Plus className="h-3.5 w-3.5" /> New client
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Build button */}
       <div className="flex items-center gap-2">
         <button
           onClick={() => run(false)}
@@ -88,15 +291,13 @@ export default function WebsiteBuildBar({
           className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-cyan/40 bg-jarvis-cyan/10 px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-jarvis-cyan transition hover:bg-jarvis-cyan/20 disabled:opacity-40"
         >
           {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Hammer className="h-3.5 w-3.5" />}
-          {phase === "idle" || phase === "error" ? "Build Website" : "Re-plan"}
+          {mode === "improve" ? "Analyze & Build" : mode === "client" ? "Build for Client" : "Build Website"}
         </button>
-        <input
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          disabled={running}
-          placeholder="Optional: describe the site (or leave blank to use the conversation)…"
-          className="min-w-0 flex-1 rounded-lg border border-jarvis-border bg-jarvis-panel2/50 px-3 py-2 text-xs text-jarvis-text placeholder:text-jarvis-muted focus:border-jarvis-cyan/50 focus:outline-none"
-        />
+        <span className="text-[10px] text-jarvis-faint">
+          {mode === "new" && "Fresh site for the active company."}
+          {mode === "improve" && "Crawls the site, preserves branding, rebuilds it better."}
+          {mode === "client" && "Saved as a separate project under the client."}
+        </span>
       </div>
 
       {/* Live progress */}
@@ -112,13 +313,13 @@ export default function WebsiteBuildBar({
                 <Check className="h-3.5 w-3.5 text-jarvis-emerald" />
               )}
               <span className="text-jarvis-text">{s.label}</span>
-              {s.detail && <span className="text-jarvis-faint">· {s.detail}</span>}
+              {s.detail && <span className="truncate text-jarvis-faint">· {s.detail}</span>}
             </div>
           ))}
         </div>
       )}
 
-      {/* Approval gate before the major action */}
+      {/* Approval gate */}
       {phase === "awaiting_approval" && approval && (
         <div className="mt-3 rounded-xl border border-jarvis-amber/40 bg-jarvis-amber/10 p-3">
           <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-jarvis-amber">

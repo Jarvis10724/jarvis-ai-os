@@ -29,6 +29,7 @@ import type {
   PluginSettingRead,
   Product,
   ProjectSummary,
+  Client,
   ShopifyStatus,
   WorkspaceArtifact,
   WorkspaceConfig,
@@ -379,8 +380,19 @@ export const api = {
     const q = qs.toString();
     return apiRequest<WorkspaceSummary[]>(`/workspaces/recent${q ? `?${q}` : ""}`);
   },
-  createWorkspace: (payload: { action: string; company_id?: string | null; title?: string }) =>
-    apiRequest<WorkspaceDetail>("/workspaces", { method: "POST", body: payload }),
+  createWorkspace: (payload: {
+    action: string;
+    company_id?: string | null;
+    title?: string;
+    mode?: "new" | "improve" | "client";
+    source_url?: string | null;
+    client_id?: string | null;
+  }) => apiRequest<WorkspaceDetail>("/workspaces", { method: "POST", body: payload }),
+  // Clients — the "Build Client Website" mode's entity (company-scoped).
+  listClients: (companyId?: string | "none") =>
+    apiRequest<Client[]>(`/clients${companyId ? `?company_id=${encodeURIComponent(companyId)}` : ""}`),
+  createClient: (payload: { name: string; company_id?: string | null; website?: string; notes?: string }) =>
+    apiRequest<Client>("/clients", { method: "POST", body: payload }),
   getWorkspace: (id: string) => apiRequest<WorkspaceDetail>(`/workspaces/${id}`),
   updateWorkspace: (id: string, payload: { title?: string; status?: string }) =>
     apiRequest<WorkspaceDetail>(`/workspaces/${id}`, { method: "PATCH", body: payload }),

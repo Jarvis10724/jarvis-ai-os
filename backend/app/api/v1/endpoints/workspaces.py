@@ -13,6 +13,7 @@ structured state so the studio panels stay filled with real generated work.
 """
 import json
 import time
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends
@@ -24,9 +25,11 @@ from app.ai_providers.factory import get_ai_provider, get_image_provider
 from app.auth.dependencies import CurrentUser
 from app.core import memory_service
 from app.core import search_service
+from app.core import website_analyzer
 from app.core import website_builder
 from app.core.workspace_actions import WORKSPACE_ACTIONS, build_system_prompt, get_action
 from app.core import workspace_state as ws
+from app.db.models.client import Client
 from app.db.models.company import Company
 from app.db.models.project import Project
 from app.db.models.task import Task
@@ -48,6 +51,12 @@ class WorkspaceCreate(BaseModel):
     action: str
     company_id: str | None = None
     title: str | None = None
+    #: Website Builder mode: "new" (default) | "improve" | "client".
+    mode: str | None = None
+    #: For "improve" mode — the existing site to crawl/analyze and improve.
+    source_url: str | None = None
+    #: For "client" mode — the Client this build belongs to.
+    client_id: str | None = None
 
 
 class WorkspaceUpdate(BaseModel):
@@ -111,11 +120,15 @@ def _serialize(db: Session, s: WorkspaceSession, *, full: bool) -> dict:
     action = get_action(s.action)
     messages = ws.load_json(s.messages_json, [])
     artifacts = ws.load_json(s.artifacts_json, [])
+    state_obj = ws.load_json(s.state_json, {})
     data = {
         "id": s.id,
         "action": s.action,
         "action_label": action.label if action else s.action,
         "company_id": s.company_id,
+        "client_id": s.client_id,
+        "mode": state_obj.get("mode", "new") if s.action == "web_builder" else None,
+        "source_url": state_obj.get("source_url") if s.action == "web_builder" else None,
         "title": s.title,
         "project_id": s.project_id,
         "status": s.status,
@@ -211,30 +224,72 @@ def create_session(payload: WorkspaceCreate, current_user: CurrentUser, db: Sess
         raise ValidationError(f"Unknown workspace action '{payload.action}'.")
     _assert_company(db, payload.company_id, current_user.id)
 
-    title = (payload.title or "").strip() or f"New {action.label}"
+    # Website Builder modes (only meaningful for web_builder). "client" mode
+    # scopes the session + project to a Client; "improve" records the source URL.
+    mode = "new"
+    client = None
+    if payload.action == "web_builder":
+        mode = (payload.mode or "new").strip().lower()
+        if mode not in ("new", "improve", "client"):
+            raise ValidationError("mode must be 'new', 'improve', or 'client'.")
+        if mode == "improve" and not (payload.source_url or "").strip():
+            raise ValidationError("A source_url is required for 'improve' mode.")
+        if mode == "client":
+            if not payload.client_id:
+                raise ValidationError("A client_id is required for 'client' mode.")
+            client = (
+                db.query(Client)
+                .filter(Client.id == payload.client_id, Client.owner_id == current_user.id)
+                .first()
+            )
+            if not client:
+                raise NotFoundError(f"Client '{payload.client_id}' not found")
 
-    # Attach to a real Project so workspace output lives in Project Manager
-    # too. Company-scoped when a company is active.
+    title = (payload.title or "").strip()
+    if not title:
+        if client:
+            title = f"{client.name} website"
+        elif mode == "improve":
+            host = urlparse(payload.source_url.strip()).netloc or payload.source_url.strip()
+            title = f"Improve: {host}"[:80]
+        else:
+            title = f"New {action.label}"
+
+    # Attach to a real Project so workspace output lives in Project Manager too.
+    # Client builds tag the project with client_id and name it for the client,
+    # keeping client work separate from the company's own.
+    project_name = f"{action.label}: {title}"
+    if client:
+        project_name = f"{client.name} — {action.label}: {title}"
     project = Project(
         owner_id=current_user.id,
-        name=f"{action.label}: {title}",
-        description=f"Auto-created by the {action.label} workspace.",
+        name=project_name[:255],
+        description=f"Auto-created by the {action.label} workspace"
+        + (f" for client {client.name}." if client else "."),
         status="active",
+        client_id=client.id if client else None,
     )
     db.add(project)
     db.commit()
     db.refresh(project)
 
+    initial_state: dict = {}
+    if payload.action == "web_builder":
+        initial_state["mode"] = mode
+        if mode == "improve":
+            initial_state["source_url"] = payload.source_url.strip()
+
     session = WorkspaceSession(
         owner_id=current_user.id,
         company_id=payload.company_id,
+        client_id=client.id if client else None,
         action=payload.action,
         title=title,
         project_id=project.id,
         status="active",
         messages_json="[]",
         artifacts_json="[]",
-        state_json="{}",
+        state_json=json.dumps(initial_state),
     )
     db.add(session)
     db.commit()
@@ -467,6 +522,20 @@ async def build_website(
         company = db.query(Company).filter(Company.id == company_id).first()
         company_name = company.name if company else ""
 
+    # Website Builder mode: the build is for the client (client mode), for an
+    # existing site to improve (improve mode), or a fresh company site (new).
+    init_state = ws.load_json(session.state_json, {})
+    mode = init_state.get("mode", "new")
+    source_url = init_state.get("source_url")
+    directive = ""
+    if session.client_id:
+        client = db.query(Client).filter(Client.id == session.client_id).first()
+        if client:
+            company_name = client.name  # tailor the site to the client
+            directive = f"This website is being built for the client '{client.name}'" + (
+                f" (existing site: {client.website})." if client.website else "."
+            )
+
     def _stage(stage, label, status, detail=""):
         return _sse({"type": "stage", "stage": stage, "label": label, "status": status, "detail": detail})
 
@@ -492,12 +561,36 @@ async def build_website(
                 s.artifacts_json = json.dumps(arts)
                 wdb.commit()
 
-            # --- Phase 1: plan (safe) ---
+            # --- Improve mode: crawl & analyze the existing site first ---
+            analysis = state.get("source_analysis")
             need_plan = not state.get("sitemap") or bool(brief)
+            if mode == "improve" and source_url and need_plan and not analysis:
+                yield _stage("analyze", "Analyzing existing website", "running", source_url)
+                try:
+                    analysis = await website_analyzer.analyze(source_url)
+                    state["source_analysis"] = analysis
+                    save_state()
+                    add_artifact("Existing site analysis", json.dumps(analysis, indent=2)[:8000], "document", "analyze")
+                    yield _stage(
+                        "analyze", "Analyzing existing website", "done",
+                        f"{analysis.get('fetched', 0)} page(s), brand: {analysis.get('brand') or 'n/a'}",
+                    )
+                except ValidationError as exc:
+                    yield _stage("analyze", "Analyzing existing website", "error", str(exc))
+                    yield _sse({"type": "error", "message": str(exc)})
+                    return
+
+            # --- Phase 1: plan (safe) ---
             if need_plan:
                 yield _stage("plan", "Planning sitemap, layouts & copy", "running")
-                seed = brief or state.get("requirements") or "Build a marketing website for this business."
-                plan = await website_builder.plan_site(provider, seed, company_name, state)
+                default_seed = (
+                    "Redesign and improve this existing website." if mode == "improve"
+                    else "Build a marketing website for this business."
+                )
+                seed = brief or state.get("requirements") or default_seed
+                plan = await website_builder.plan_site(
+                    provider, seed, company_name, state, analysis=analysis, directive=directive
+                )
                 if not plan.get("sitemap"):
                     yield _stage("plan", "Planning sitemap, layouts & copy", "error", "The planner returned no pages.")
                     yield _sse({"type": "error", "message": "Planning failed — check the AI provider/key and try again."})

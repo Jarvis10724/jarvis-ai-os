@@ -56,14 +56,45 @@ _PLAN_SYS = (
 ) % MAX_PAGES
 
 
-async def plan_site(provider, brief: str, company_name: str, state: dict) -> dict:
+async def plan_site(
+    provider,
+    brief: str,
+    company_name: str,
+    state: dict,
+    *,
+    analysis: dict | None = None,
+    directive: str = "",
+) -> dict:
     context = ""
     existing = {k: state.get(k) for k in ("sitemap", "requirements") if state.get(k)}
     if existing:
         context = "\n\nExisting workspace context (build on it):\n" + json.dumps(existing)[:2000]
-    user = f"Business: {company_name or 'the business'}\n\nBrief:\n{brief}{context}"
+
+    improve_block = ""
+    if analysis:
+        slim = {
+            "source_url": analysis.get("source_url"),
+            "brand": analysis.get("brand"),
+            "description": analysis.get("description"),
+            "palette": analysis.get("palette"),
+            "fonts": analysis.get("fonts"),
+            "existing_nav": analysis.get("nav"),
+            "existing_headings": [h for p in analysis.get("pages", []) for h in p.get("headings", [])][:20],
+        }
+        improve_block = (
+            "\n\nThis is an IMPROVE task — here is an analysis of the client's EXISTING site. "
+            "PRESERVE the brand identity where it's clearly intentional (brand name, and the "
+            "existing palette/fonts unless they're obviously broken), but IMPROVE the sitemap "
+            "structure, layouts, design polish, and copy. Do not copy the old copy verbatim — "
+            "rewrite it stronger.\n" + json.dumps(slim)[:3000]
+        )
+
+    user = (
+        f"Business: {company_name or 'the business'}"
+        + (f"\n{directive}" if directive else "")
+        + f"\n\nBrief:\n{brief}{context}{improve_block}"
+    )
     plan = await _complete_json(provider, _PLAN_SYS, user)
-    # Trim to a sane page count.
     if isinstance(plan.get("sitemap"), list):
         plan["sitemap"] = plan["sitemap"][:MAX_PAGES]
     return plan

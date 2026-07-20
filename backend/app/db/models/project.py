@@ -14,5 +14,8 @@ class Project(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="active")  # active | archived | done
+    #: Set when this project belongs to a Client (Website Builder "Build Client
+    #: Website" mode) — keeps client work separate from the company's own.
+    client_id: Mapped[str | None] = mapped_column(ForeignKey("clients.id"), nullable=True)
 
     tasks: Mapped[list["Task"]] = relationship(back_populates="project", cascade="all, delete-orphan")

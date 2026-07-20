@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     calendar,
     capabilities,
     chat,
+    clients,
     company,
     dashboard,
     drive,
@@ -32,6 +33,7 @@ api_router.include_router(projects.router)
 api_router.include_router(tasks.router)
 api_router.include_router(workspaces.router)
 api_router.include_router(agents.router)
+api_router.include_router(clients.router)
 api_router.include_router(company.router)
 api_router.include_router(integrations.router)
 api_router.include_router(settings.router)

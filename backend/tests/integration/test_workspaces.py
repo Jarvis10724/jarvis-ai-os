@@ -245,7 +245,9 @@ def test_actions_expose_stages(client):
     assert set(by_key) == {
         "web_builder", "logo_design", "product_creation", "deep_research", "code_writer", "automation"
     }
-    assert [s["key"] for s in by_key["web_builder"]["stages"]][:2] == ["requirements", "sitemap"]
+    web_stage_keys = [s["key"] for s in by_key["web_builder"]["stages"]]
+    assert web_stage_keys[0] == "requirements"
+    assert {"sitemap", "layouts", "components", "images", "preview"} <= set(web_stage_keys)
     assert by_key["logo_design"]["supports_images"] is True
 
 
@@ -380,7 +382,9 @@ def test_stream_failure_reports_error_and_resets_task(client, monkeypatch):
     assert full["artifacts"] == []
     # The turn's task was not advanced to review (reset to backlog); session intact.
     assert all(t["status"] != "review" for t in full["tasks"])
-    assert full["state"] == {}
+    # No structured work merged from the failed turn (web_builder sessions start
+    # with just {"mode": "new"}).
+    assert not any(k in full["state"] for k in ("sitemap", "components", "images", "preview_html"))
 
 
 def test_unauthorized_access_is_blocked(client, fake_provider):

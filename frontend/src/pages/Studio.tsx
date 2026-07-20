@@ -167,9 +167,13 @@ export default function StudioPage() {
     setRecent(rec);
   }
 
-  async function newSession(): Promise<WorkspaceDetail | null> {
+  async function newSession(opts?: {
+    mode?: "new" | "improve" | "client";
+    source_url?: string;
+    client_id?: string;
+  }): Promise<WorkspaceDetail | null> {
     try {
-      const created = await api.createWorkspace({ action, company_id: activeCompanyId });
+      const created = await api.createWorkspace({ action, company_id: activeCompanyId, ...opts });
       setSessions((prev) => [{ ...created }, ...prev]);
       setDetail(created);
       setSaveState("idle");
@@ -341,7 +345,7 @@ export default function StudioPage() {
 
         <div className="flex items-center gap-1.5 px-3 pt-3">
           <button
-            onClick={newSession}
+            onClick={() => newSession()}
             className="press-scale flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-jarvis-cyan/40 bg-jarvis-cyan/10 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-jarvis-cyan transition hover:bg-jarvis-cyan/20"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -482,11 +486,24 @@ export default function StudioPage() {
 
         {action === "web_builder" && detail && (
           <WebsiteBuildBar
-            sessionId={detail.id}
+            session={{
+              id: detail.id,
+              mode: detail.mode,
+              source_url: detail.source_url,
+              client_id: detail.client_id,
+            }}
+            companyId={activeCompanyId}
             disabled={streaming}
-            onRefresh={async () => {
+            onCreateModeSession={async (opts) => {
+              const created = await newSession(opts);
+              return created?.id ?? null;
+            }}
+            onRefresh={async (sessionId: string) => {
+              // Refresh the session actually being built (may be one the build
+              // bar just created), not a stale captured detail.
+              if (!sessionId) return;
               try {
-                const d = await api.getWorkspace(detail.id);
+                const d = await api.getWorkspace(sessionId);
                 setDetail(d);
               } catch {
                 /* ignore transient refresh errors */

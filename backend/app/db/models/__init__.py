@@ -9,6 +9,7 @@ from app.db.models.capability import (
     CapabilityConfig,
     ScheduledJob,
 )
+from app.db.models.client import Client
 from app.db.models.company import Company, Product
 from app.db.models.integration_credential import IntegrationCredential
 from app.db.models.memory import MemoryAuditLog, MemoryEntry, MemoryLink
@@ -26,6 +27,7 @@ __all__ = [
     "WorkspaceSession",
     "PluginConfig",
     "IntegrationCredential",
+    "Client",
     "Company",
     "Product",
     "MemoryEntry",

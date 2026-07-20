@@ -113,6 +113,7 @@ WORKSPACE_ACTIONS: dict[str, WorkspaceAction] = {
         memory_kind="decision",
         stages=[
             WorkspaceStage("requirements", "Requirements", "requirements", "Goals, audience, pages, must-haves"),
+            WorkspaceStage("analysis", "Analysis", "source_analysis", "Existing site analysis (Improve mode)"),
             WorkspaceStage("sitemap", "Sitemap", "sitemap", "Pages and their sections"),
             WorkspaceStage("layouts", "Layouts", "layouts", "Section structure per page"),
             WorkspaceStage("copy", "Copy", "copy", "Draft copy per page"),
@@ -123,6 +124,7 @@ WORKSPACE_ACTIONS: dict[str, WorkspaceAction] = {
         ],
         state_schema={
             "requirements": "string (markdown) — the agreed brief: goals, audience, tone, required pages.",
+            "source_analysis": "object {brand, description, palette, fonts, nav, pages} — crawl of the existing site (Improve mode).",
             "sitemap": "array of {path, title, purpose, sections:[string]} — one entry per page.",
             "layouts": "object keyed by page path -> {sections:[{name, type, description}]} — the structural layout per page.",
             "copy": "object keyed by page path -> {heading, sections:[{title, body}]} of real draft copy.",

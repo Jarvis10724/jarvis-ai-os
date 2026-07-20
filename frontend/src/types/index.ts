@@ -566,11 +566,24 @@ export interface WorkspaceConfig {
   state_keys: string[];
 }
 
+export interface Client {
+  id: string;
+  name: string;
+  company_id: string | null;
+  website: string | null;
+  notes: string | null;
+  project_count: number;
+  created_at: string | null;
+}
+
 export interface WorkspaceSummary {
   id: string;
   action: string;
   action_label: string;
   company_id: string | null;
+  client_id?: string | null;
+  mode?: "new" | "improve" | "client" | null;
+  source_url?: string | null;
   title: string;
   project_id: string | null;
   status: string;
