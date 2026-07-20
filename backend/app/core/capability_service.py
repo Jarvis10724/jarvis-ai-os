@@ -45,6 +45,9 @@ from app.db.models.capability import (
 )
 from app.db.models.company import Company
 from app.exceptions import AuthorizationError, NotFoundError, ValidationError
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def _assert_company_owned(db: Session, company_id: str, owner_id: str) -> None:
@@ -395,6 +398,34 @@ def _approval_owned(db: Session, request_id: str, owner_id: str) -> ApprovalRequ
     return req
 
 
+def _record_approval_timeline(db: Session, req: ApprovalRequest, *, decision: str, note: str | None) -> None:
+    """When an approval tied to a Project is decided, log it on that project's
+    Timeline. Best-effort and lazily imported so a timeline hiccup never blocks
+    the decision itself, and so capability_service stays free of an import-time
+    dependency on project_service."""
+    if not req.project_id:
+        return
+    try:
+        from app.core import project_service  # local import avoids an import cycle
+        from app.db.models.project import Project
+
+        project = db.query(Project).filter(Project.id == req.project_id).first()
+        if not project:
+            return
+        project_service.record_project_event(
+            db,
+            project=project,
+            owner_id=req.owner_id,
+            kind="approval_decided",
+            title=f"Approval {decision}: {req.capability_name} · {req.action_type}",
+            source=req.capability_name,
+            detail=note or None,
+            ref_id=req.id,
+        )
+    except Exception as exc:  # noqa: BLE001 - never let timeline logging break a decision
+        logger.error("approval_timeline_failed", request_id=req.id, error=str(exc))
+
+
 def approve_action(db: Session, *, owner_id: str, request_id: str, decided_by: str | None = None, note: str | None = None) -> dict:
     req = _approval_owned(db, request_id, owner_id)
     if req.status != "pending":
@@ -419,6 +450,7 @@ def approve_action(db: Session, *, owner_id: str, request_id: str, decided_by: s
         after=after,
         note=note,
     )
+    _record_approval_timeline(db, req, decision="approved", note=note)
     return after
 
 
@@ -446,6 +478,7 @@ def reject_action(db: Session, *, owner_id: str, request_id: str, decided_by: st
         after=after,
         note=note,
     )
+    _record_approval_timeline(db, req, decision="rejected", note=note)
     return after
 
 

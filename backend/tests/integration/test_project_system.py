@@ -134,6 +134,103 @@ def test_project_overview_not_owned_404(client):
     assert client.get(f"{API}/projects/{s['project_id']}/overview", headers=intruder).status_code == 404
 
 
+def test_approval_decision_records_timeline_event(client):
+    """Approving (or rejecting) an approval tied to a project must drop an
+    `approval_decided` event on that project's Timeline."""
+    headers = _register_and_login(client, "ps-approval-tl@example.com")
+    company = _create_company(client, headers, "ApprovalTLCo")
+    project = client.get(f"{API}/projects/default?company_id={company}", headers=headers).json()
+
+    # Grant the approval-gated email.send action, then propose it against the project.
+    client.put(
+        f"{API}/capabilities/email/config",
+        json={"enabled": True, "permissions": ["send"], "company_id": company},
+        headers=headers,
+    )
+    approval = client.post(
+        f"{API}/approvals",
+        json={
+            "capability_name": "email",
+            "action_type": "send",
+            "payload": {"to": "x@y.com", "subject": "Hi", "body": "b"},
+            "company_id": company,
+            "project_id": project["id"],
+        },
+        headers=headers,
+    ).json()
+
+    # No decision yet → no approval_decided event.
+    tl_before = client.get(f"{API}/projects/{project['id']}/timeline", headers=headers).json()
+    assert not any(e["kind"] == "approval_decided" for e in tl_before)
+
+    # Approve it (email has an executor; execution may no-op without creds, but
+    # the decision itself is what must land on the timeline).
+    client.post(f"{API}/approvals/{approval['id']}/approve", json={"note": "ok"}, headers=headers)
+
+    tl_after = client.get(f"{API}/projects/{project['id']}/timeline", headers=headers).json()
+    decided = [e for e in tl_after if e["kind"] == "approval_decided"]
+    assert len(decided) == 1
+    assert decided[0]["ref_id"] == approval["id"]
+    assert "approved" in decided[0]["title"]
+    # And it shows up in the project overview's timeline bucket.
+    ov = client.get(f"{API}/projects/{project['id']}/overview", headers=headers).json()
+    assert any(e["kind"] == "approval_decided" for e in ov["timeline"])
+
+
+def test_approval_reject_records_timeline_event(client):
+    headers = _register_and_login(client, "ps-approval-reject@example.com")
+    company = _create_company(client, headers, "RejectTLCo")
+    project = client.get(f"{API}/projects/default?company_id={company}", headers=headers).json()
+    client.put(
+        f"{API}/capabilities/email/config",
+        json={"enabled": True, "permissions": ["send"], "company_id": company},
+        headers=headers,
+    )
+    approval = client.post(
+        f"{API}/approvals",
+        json={
+            "capability_name": "email",
+            "action_type": "send",
+            "payload": {"to": "x@y.com", "subject": "Hi", "body": "b"},
+            "company_id": company,
+            "project_id": project["id"],
+        },
+        headers=headers,
+    ).json()
+    client.post(f"{API}/approvals/{approval['id']}/reject", json={"note": "no"}, headers=headers)
+    tl = client.get(f"{API}/projects/{project['id']}/timeline", headers=headers).json()
+    decided = [e for e in tl if e["kind"] == "approval_decided"]
+    assert len(decided) == 1 and "rejected" in decided[0]["title"]
+
+
+def test_company_level_approval_has_no_project_timeline(client):
+    """An approval with no project_id (company-level, e.g. an ad-hoc Gmail
+    send) must NOT try to write a project timeline event."""
+    headers = _register_and_login(client, "ps-approval-noproj@example.com")
+    company = _create_company(client, headers, "NoProjTLCo")
+    project = client.get(f"{API}/projects/default?company_id={company}", headers=headers).json()
+    client.put(
+        f"{API}/capabilities/email/config",
+        json={"enabled": True, "permissions": ["send"], "company_id": company},
+        headers=headers,
+    )
+    approval = client.post(
+        f"{API}/approvals",
+        json={
+            "capability_name": "email",
+            "action_type": "send",
+            "payload": {"to": "x@y.com", "subject": "Hi", "body": "b"},
+            "company_id": company,
+        },
+        headers=headers,
+    ).json()
+    assert approval["project_id"] is None
+    client.post(f"{API}/approvals/{approval['id']}/approve", json={}, headers=headers)
+    # The company's default project timeline stays clean of approval events.
+    tl = client.get(f"{API}/projects/{project['id']}/timeline", headers=headers).json()
+    assert not any(e["kind"] == "approval_decided" for e in tl)
+
+
 def test_migration_consolidation_merges_throwaway_projects():
     """Load the migration module and run its consolidation routine against a
     seeded 'old world' (several per-session throwaway projects for one company)
