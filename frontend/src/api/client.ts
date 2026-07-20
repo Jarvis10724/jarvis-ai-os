@@ -31,6 +31,9 @@ import type {
   ProjectSummary,
   ProjectOverview,
   ProjectEvent,
+  Agent,
+  AgentRun,
+  AgentRunDetail,
   Client,
   ShopifyStatus,
   WorkspaceArtifact,
@@ -560,6 +563,20 @@ export const api = {
   setScheduledJobEnabled: (id: string, enabled: boolean) =>
     apiRequest<ScheduledJobView>(`/scheduled-jobs/${id}`, { method: "PUT", body: { enabled } }),
   deleteScheduledJob: (id: string) => apiRequest<void>(`/scheduled-jobs/${id}`, { method: "DELETE" }),
+
+  // AI Agents — the Active Agents dock panel. Read the roster + runs and launch
+  // a run for the active company (all existing backend endpoints; no changes).
+  listAgents: () => apiRequest<Agent[]>("/agents"),
+  listAgentRuns: (params: { companyId?: string | "none"; agent?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.companyId) qs.set("company_id", params.companyId);
+    if (params.agent) qs.set("agent", params.agent);
+    const q = qs.toString();
+    return apiRequest<AgentRun[]>(`/agents/runs${q ? `?${q}` : ""}`);
+  },
+  getAgentRun: (id: string) => apiRequest<AgentRunDetail>(`/agents/runs/${id}`),
+  runAgent: (agentKey: string, payload: { objective: string; company_id?: string | null }) =>
+    apiRequest<AgentRun>(`/agents/${agentKey}/run`, { method: "POST", body: payload }),
 };
 
 export interface WorkspaceStreamHandlers {

@@ -1,13 +1,24 @@
 import { createContext, useContext, type ReactNode } from "react";
 
+// The panels the persistent right dock can show. One at a time.
+export type DockPanel = "notifications" | "timeline" | "memory" | "agents";
+
 // Small context so deeply nested dashboard widgets (e.g. the CEO
-// dashboard's notifications snapshot card) can trigger chrome owned by
-// DashboardShell — like opening the notifications slide-over — without
-// threading callbacks through every page that renders <DashboardShell>.
+// dashboard's notifications snapshot card) and the shell chrome (left rail,
+// mobile nav) can trigger shell-owned surfaces — the right dock panels, the
+// quick-actions modal, the command palette — without threading callbacks
+// through every page that renders <DashboardShell>.
 interface DashboardUIContextValue {
-  openNotifications: () => void;
   openQuickActions: () => void;
   openCommandPalette: () => void;
+  // Right dock
+  activePanel: DockPanel | null;
+  openPanel: (panel: DockPanel) => void;
+  closePanel: () => void;
+  togglePanel: (panel: DockPanel) => void;
+  // Back-compat alias — existing callers open the notifications surface, which
+  // is now the notifications dock panel.
+  openNotifications: () => void;
 }
 
 const DashboardUIContext = createContext<DashboardUIContextValue | undefined>(undefined);

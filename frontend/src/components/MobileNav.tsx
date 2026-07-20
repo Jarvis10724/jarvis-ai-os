@@ -1,11 +1,20 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { X } from "lucide-react";
+import { Bell, Bot, BrainCircuit, Clock, X, type LucideIcon } from "lucide-react";
 
 import CompanySwitcher from "@/components/CompanySwitcher";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
 import { SidebarBrand, SidebarNav, SystemLoadCard } from "@/components/Sidebar";
+import { useDashboardUI, type DockPanel } from "@/context/DashboardUIContext";
+
+const PANELS: { key: DockPanel; label: string; icon: LucideIcon }[] = [
+  { key: "timeline", label: "Timeline", icon: Clock },
+  { key: "memory", label: "Memory", icon: BrainCircuit },
+  { key: "agents", label: "Agents", icon: Bot },
+  { key: "notifications", label: "Alerts", icon: Bell },
+];
 
 export default function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { openPanel } = useDashboardUI();
   return (
     <AnimatePresence>
       {open && (
@@ -35,6 +44,22 @@ export default function MobileNav({ open, onClose }: { open: boolean; onClose: (
             </div>
             <CompanySwitcher />
             <ProjectSwitcher />
+            {/* Right-dock panels (Timeline / Memory / Agents / Notifications) */}
+            <div className="mx-3 mt-2 grid grid-cols-4 gap-1.5">
+              {PANELS.map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    openPanel(key);
+                    onClose();
+                  }}
+                  className="flex flex-col items-center gap-1 rounded-xl border border-jarvis-border bg-jarvis-panel2/30 py-2 text-[10px] text-jarvis-muted transition hover:border-jarvis-cyan/40 hover:text-jarvis-cyan"
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
             <SidebarNav onNavigate={onClose} />
             <SystemLoadCard />
           </motion.aside>

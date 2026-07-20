@@ -258,6 +258,7 @@ export interface ApprovalRequestView {
   id: string;
   capability_name: string;
   company_id: string | null;
+  project_id: string | null;
   action_type: string;
   payload: Record<string, unknown> | null;
   status: ApprovalStatus;
@@ -711,4 +712,37 @@ export interface BusinessIdea {
   division: string | null;
   score: number | null;
   notes: string;
+}
+
+// --- AI Agents (Active Agents dock panel; backend app/api/v1/endpoints/agents.py) ---
+
+export interface Agent {
+  key: string;
+  label: string;
+  role: string;
+  tools: string[];
+}
+
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "awaiting_approval"
+  | "completed"
+  | "failed";
+
+export interface AgentRun {
+  id: string;
+  agent_key: string;
+  agent_label: string;
+  company_id: string | null;
+  objective: string;
+  status: AgentRunStatus;
+  project_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AgentRunDetail extends AgentRun {
+  reasoning_log: { step?: string; type?: string; content?: string; [k: string]: unknown }[];
+  result: string | null;
 }

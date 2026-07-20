@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { CornerDownLeft, Search, Zap } from "lucide-react";
+import { CornerDownLeft, FolderKanban, Search, Zap } from "lucide-react";
 import clsx from "clsx";
 
 import { GLOBAL_ITEMS, SYSTEM_ITEMS, WORKSPACE_ITEMS } from "@/components/Sidebar";
 import { useCompany } from "@/context/CompanyContext";
+import { useProject } from "@/context/ProjectContext";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
 
 interface PaletteEntry {
@@ -13,7 +14,7 @@ interface PaletteEntry {
   label: string;
   description: string;
   icon: typeof Search;
-  group: "Go to" | "Quick Actions";
+  group: "Go to" | "Projects" | "Quick Actions";
   run: () => void;
 }
 
@@ -31,6 +32,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { activeCompany } = useCompany();
+  const { projects } = useProject();
 
   const entries = useMemo<PaletteEntry[]>(() => {
     const navItems = [...GLOBAL_ITEMS, ...(activeCompany ? WORKSPACE_ITEMS : []), ...SYSTEM_ITEMS];
@@ -42,6 +44,15 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
       group: "Go to",
       run: () => navigate(item.to),
     }));
+    // Projects in the active company — jump straight to a project's workspace.
+    const projectEntries: PaletteEntry[] = projects.map((p) => ({
+      key: `project:${p.id}`,
+      label: p.name,
+      description: p.is_default ? "Default project" : "Project",
+      icon: FolderKanban,
+      group: "Projects",
+      run: () => navigate(`/projects/${p.id}`),
+    }));
     const actionEntries: PaletteEntry[] = QUICK_ACTIONS.map((action) => ({
       key: `action:${action.key}`,
       label: action.label,
@@ -51,9 +62,9 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
       // Opens the action's persistent streaming workspace.
       run: () => navigate(`/studio/${action.pluginName}`),
     }));
-    return [...navEntries, ...actionEntries];
+    return [...navEntries, ...projectEntries, ...actionEntries];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCompany, navigate]);
+  }, [activeCompany, projects, navigate]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -134,7 +145,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
               {filtered.length === 0 && (
                 <p className="px-3 py-8 text-center text-sm text-jarvis-muted">No matches.</p>
               )}
-              {(["Go to", "Quick Actions"] as const).map((group) => {
+              {(["Go to", "Projects", "Quick Actions"] as const).map((group) => {
                 const groupEntries = filtered.filter((e) => e.group === group);
                 if (groupEntries.length === 0) return null;
                 return (

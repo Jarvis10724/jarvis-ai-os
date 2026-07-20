@@ -4,11 +4,11 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import CommandPalette from "@/components/CommandPalette";
 import MobileNav from "@/components/MobileNav";
-import NotificationsPanel from "@/components/NotificationsPanel";
 import QuickActions from "@/components/QuickActions";
 import RadialNav from "@/components/RadialNav";
+import RightDock from "@/components/shell/RightDock";
 import TopNav from "@/components/TopNav";
-import { DashboardUIProvider } from "@/context/DashboardUIContext";
+import { DashboardUIProvider, type DockPanel } from "@/context/DashboardUIContext";
 import { useAutoDailyBriefing } from "@/hooks/useAutoDailyBriefing";
 import { useGlobalHotkey } from "@/hooks/useGlobalHotkey";
 
@@ -17,7 +17,7 @@ import { useGlobalHotkey } from "@/hooks/useGlobalHotkey";
 // for the whole authenticated session — only <Outlet/> (the routed page
 // content) swaps and transitions on navigation.
 export default function DashboardShell() {
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<DockPanel | null>(null);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -38,7 +38,11 @@ export default function DashboardShell() {
   return (
     <DashboardUIProvider
       value={{
-        openNotifications: () => setNotificationsOpen(true),
+        activePanel,
+        openPanel: (panel) => setActivePanel(panel),
+        closePanel: () => setActivePanel(null),
+        togglePanel: (panel) => setActivePanel((cur) => (cur === panel ? null : panel)),
+        openNotifications: () => setActivePanel("notifications"),
         openQuickActions: () => setQuickActionsOpen(true),
         openCommandPalette: () => setCommandPaletteOpen(true),
       }}
@@ -65,10 +69,10 @@ export default function DashboardShell() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <TopNav
-            onToggleNotifications={() => setNotificationsOpen((v) => !v)}
+            onToggleNotifications={() => setActivePanel((cur) => (cur === "notifications" ? null : "notifications"))}
             onToggleQuickActions={() => setQuickActionsOpen((v) => !v)}
             onOpenMobileNav={() => setMobileNavOpen(true)}
-            unreadNotifications={3}
+            unreadNotifications={0}
           />
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
@@ -84,7 +88,8 @@ export default function DashboardShell() {
           </AnimatePresence>
         </div>
 
-        <NotificationsPanel open={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
+        <RightDock />
+
         <QuickActions open={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} />
         <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
       </div>
