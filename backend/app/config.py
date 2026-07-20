@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str | None = None
     GEMINI_DEFAULT_MODEL: str = "gemini-2.5-pro"
 
+    # --- Web search (Deep Research) ---
+    #: Which search provider to use. "" disables live search (Deep Research
+    #: falls back to honest model-knowledge mode); "tavily" for live results;
+    #: "mock" for deterministic offline dev/testing of the pipeline.
+    SEARCH_PROVIDER: str = ""
+    TAVILY_API_KEY: str | None = None
+    #: Results requested per query, and how long identical queries are cached.
+    SEARCH_MAX_RESULTS: int = 5
+    SEARCH_CACHE_TTL_SECONDS: int = 900
+
     # --- Logging ---
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "json"

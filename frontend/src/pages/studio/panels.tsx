@@ -500,33 +500,71 @@ function renderContent(stateKey: string, value: unknown, ctx: PanelCtx): React.R
       const sources = asArray(value);
       return (
         <div className="space-y-2">
-          {sources.map((s, i) => (
-            <Card key={i}>
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-semibold text-jarvis-text">{asStr(s.title)}</p>
-                {s.derived ? (
-                  <span className="shrink-0 rounded-full border border-jarvis-amber/40 bg-jarvis-amber/10 px-2 py-0.5 text-[9px] font-semibold uppercase text-jarvis-amber">
-                    Derived
-                  </span>
-                ) : null}
-              </div>
-              {asStr(s.note) && <p className="mt-0.5 text-xs text-jarvis-muted">{asStr(s.note)}</p>}
-              {asStr(s.url) && <p className="mt-1 truncate text-[10px] text-jarvis-cyan">{asStr(s.url)}</p>}
-            </Card>
-          ))}
+          {sources.map((s, i) => {
+            const url = asStr(s.url);
+            const isLive = s.derived === false;
+            return (
+              <Card key={i}>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold text-jarvis-text">
+                    {asStr(s.id) && <span className="text-jarvis-faint">[{asStr(s.id)}] </span>}
+                    {asStr(s.title)}
+                  </p>
+                  {s.derived ? (
+                    <span className="shrink-0 rounded-full border border-jarvis-amber/40 bg-jarvis-amber/10 px-2 py-0.5 text-[9px] font-semibold uppercase text-jarvis-amber">
+                      Derived
+                    </span>
+                  ) : isLive ? (
+                    <span className="shrink-0 rounded-full border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-2 py-0.5 text-[9px] font-semibold uppercase text-jarvis-emerald">
+                      Live
+                    </span>
+                  ) : null}
+                </div>
+                {asStr(s.note) && <p className="mt-0.5 text-xs text-jarvis-muted">{asStr(s.note)}</p>}
+                {url &&
+                  (isLive ? (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="mt-1 block truncate text-[10px] text-jarvis-cyan underline decoration-jarvis-cyan/40 underline-offset-2 hover:decoration-jarvis-cyan"
+                    >
+                      {asStr(s.source) || url}
+                    </a>
+                  ) : (
+                    <p className="mt-1 truncate text-[10px] text-jarvis-cyan">{url}</p>
+                  ))}
+              </Card>
+            );
+          })}
         </div>
       );
     }
     case "citations": {
       const cites = asArray(value);
+      const byId = new Map(asArray(ctx.detail.state.sources).map((s) => [asStr(s.id), s]));
       return (
         <div className="space-y-1.5">
-          {cites.map((c, i) => (
-            <Card key={i}>
-              <p className="text-xs text-jarvis-text">{asStr(c.claim)}</p>
-              <p className="mt-0.5 text-[10px] text-jarvis-faint">source: {asStr(c.source_id)}</p>
-            </Card>
-          ))}
+          {cites.map((c, i) => {
+            const src = byId.get(asStr(c.source_id));
+            const url = src ? asStr(src.url) : "";
+            const label = src ? asStr(src.source) || asStr(src.title) || asStr(c.source_id) : asStr(c.source_id);
+            return (
+              <Card key={i}>
+                <p className="text-xs text-jarvis-text">{asStr(c.claim)}</p>
+                <p className="mt-0.5 flex items-center gap-1 text-[10px] text-jarvis-faint">
+                  <span className="text-jarvis-cyan">[{asStr(c.source_id)}]</span>
+                  {url ? (
+                    <a href={url} target="_blank" rel="noreferrer noopener" className="truncate text-jarvis-cyan underline decoration-jarvis-cyan/40 underline-offset-2">
+                      {label}
+                    </a>
+                  ) : (
+                    <span className="truncate">{label}</span>
+                  )}
+                </p>
+              </Card>
+            );
+          })}
         </div>
       );
     }

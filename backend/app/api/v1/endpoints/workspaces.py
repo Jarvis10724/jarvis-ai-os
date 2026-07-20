@@ -23,6 +23,7 @@ from app.ai_providers.base import Message
 from app.ai_providers.factory import get_ai_provider, get_image_provider
 from app.auth.dependencies import CurrentUser
 from app.core import memory_service
+from app.core import search_service
 from app.core.workspace_actions import WORKSPACE_ACTIONS, build_system_prompt, get_action
 from app.core import workspace_state as ws
 from app.db.models.company import Company
@@ -405,12 +406,23 @@ async def generate_image(
 
 @router.get("/search/status")
 def search_status(current_user: CurrentUser):
-    """Whether live web search is wired for the Research Desk. No provider is
-    configured in this build, so the Desk reasons from model knowledge and
-    marks its sources as derived — this endpoint reports that honestly."""
+    """Whether live web search is wired for the Research Desk. When a provider
+    is configured (SEARCH_PROVIDER + its key), Deep Research retrieves real
+    pages and cites them; otherwise it reasons from model knowledge and marks
+    sources as derived — reported honestly either way."""
+    from app.search.factory import get_search_provider
+
+    provider = get_search_provider()
+    if provider is None:
+        return {
+            "configured": False,
+            "provider": None,
+            "message": "Live web search isn't configured. Research runs from model knowledge; sources are marked derived and no URLs are fabricated. Set SEARCH_PROVIDER (+ the provider's key) to enable live retrieval.",
+        }
     return {
-        "configured": False,
-        "message": "Live web search isn't configured. Research runs from model knowledge; sources are marked as derived, and no URLs are fabricated.",
+        "configured": True,
+        "provider": provider.name,
+        "message": f"Live web search enabled via '{provider.name}'. Deep Research retrieves and cites real sources (cached to avoid re-billing).",
     }
 
 
@@ -453,7 +465,7 @@ async def _structure_state(action, request_text: str, deliverable_text: str) -> 
 
 
 @router.post("/{session_id}/message")
-def send_message(
+async def send_message(
     session_id: str, payload: MessageIn, current_user: CurrentUser, db: Session = Depends(get_db)
 ):
     """Append the user's message, then stream Jarvis's response token-by-token
@@ -497,6 +509,34 @@ def send_message(
     stage = payload.stage or ""
     current_state = ws.load_json(session.state_json, {})
 
+    # Live web search for Deep Research: retrieve real pages, attach them to the
+    # session state now (so the Sources panel shows real, cited sources), and
+    # ground the model in them. When search isn't configured this is a no-op and
+    # Deep Research keeps its honest model-knowledge mode (sources marked derived).
+    retrieved_block = ""
+    if action.key == "deep_research":
+        try:
+            sr = await search_service.search(content)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("workspace_search_failed", session_id=session_id, error=str(exc))
+            sr = {"configured": False, "results": []}
+        if sr.get("configured") and sr.get("results"):
+            sources = search_service.to_sources(sr["results"])
+            current_state = ws.deep_merge(current_state, {"sources": sources})
+            session.state_json = json.dumps(current_state)
+            db.commit()
+            src_lines = "\n".join(
+                f"[{s['id']}] {s['title']} — {s['url']}\n    {s['note']}" for s in sources
+            )
+            cached = " (served from cache)" if sr.get("cached") else ""
+            retrieved_block = (
+                f"\n\n## Retrieved web sources{cached}\n"
+                "These are REAL pages retrieved by a live web search for this query. Ground "
+                "every factual claim in them, add a `citations` entry mapping each claim to the "
+                'source id it came from, and keep these `sources` with "derived": false. Do not '
+                "invent other sources, URLs, or figures beyond what these support.\n" + src_lines
+            )
+
     # Company context for the system prompt.
     company_line = ""
     if company_id:
@@ -506,6 +546,8 @@ def send_message(
 
     provider = get_ai_provider()
     system_prompt = build_system_prompt(action, company_line=company_line, state=current_state)
+    if retrieved_block:
+        system_prompt += retrieved_block
     convo = [Message(role=m["role"], content=m["content"]) for m in history[-MAX_HISTORY_TURNS:]]
     if stage_note and convo:
         convo[-1] = Message(role=convo[-1].role, content=convo[-1].content + stage_note)
