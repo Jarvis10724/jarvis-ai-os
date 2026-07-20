@@ -318,11 +318,16 @@ def test_save_artifact_and_attach_task(client):
     assert any(t["title"] == "Write tests" for t in full["tasks"])
 
 
-def test_image_and_search_status_report_unconfigured(client):
+def test_image_and_search_status_report_unconfigured(client, monkeypatch):
+    # Force "no provider" so this is hermetic regardless of the developer's .env
+    # (which may legitimately have SEARCH_PROVIDER/keys set for live use).
+    from app.search import factory
+
+    monkeypatch.setattr(factory, "get_search_provider", lambda: None)
     headers = _register_and_login(client, "ws-imgstatus@example.com")
     img = client.get(f"{API}/workspaces/image/status", headers=headers).json()
     search = client.get(f"{API}/workspaces/search/status", headers=headers).json()
-    # No image/search provider in the test env — reported honestly, not faked.
+    # Reported honestly, not faked.
     assert "configured" in img
     assert search["configured"] is False
 
