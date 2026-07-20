@@ -27,6 +27,21 @@ Backend suite: **101 passed** (21 workspace tests incl. 8 hardening tests); the
 only failure is a pre-existing, unrelated `google_calendar` health-check test.
 Frontend: `tsc --noEmit` clean, production build clean, no runtime console errors.
 
+## Website Builder — production-ready sign-off (2026-07-20)
+
+The **Build a Website** Quick Action passed a full end-to-end browser test and
+is marked **production-ready**. Verified live (real AI provider, Primal Penni
+company):
+
+- Built a one-page site from scratch ("Bean There Coffee", path `/`) — requirements → plan.
+- **Approval gate** shown before generation; approved via *Approve & generate*.
+- Generated and displayed **React components** (5 files), **images** (1 hero placeholder), and a **runnable Preview** (rendered site, 10.5 KB HTML).
+- All stages autosaved to `state_json`; artifacts versioned across requirements/plan/images/components/preview.
+- **Hard browser refresh → session reopened directly on the Preview stage** with the rendered site; Components/Images/conversation history all rehydrated (fix `826e247`).
+- Three modes (New / Improve Existing / Client) shipped and tested (`test_website_modes.py`), each creating its own Project under Project Manager with client/company asset isolation.
+
+Known non-blockers: real image pixels require `OPENAI_API_KEY` (placeholders otherwise, honest by design); Preview renders inline via CDN Babel (no external hosting/export yet).
+
 ## Completed features
 
 - **Six dedicated studio workspaces** at `/studio/:action`, each with its own
