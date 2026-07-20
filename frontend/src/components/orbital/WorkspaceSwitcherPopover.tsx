@@ -1,16 +1,20 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Building2, Check, Plus } from "lucide-react";
+import { Building2, Check, FolderKanban, Plus } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { useCompany } from "@/context/CompanyContext";
+import { useProject } from "@/context/ProjectContext";
 import { usePrompt } from "@/context/PromptContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/api/client";
 
 /**
- * The single control for "which company is active." Every workspace-scoped
- * orbital node re-renders against whichever company this popover selects —
- * the shell itself never branches per company, only the data underneath it
- * does (see OrbitalHome's workspace ring, keyed by activeCompanyId).
+ * The single control for "which company AND which project is active." Every
+ * workspace-scoped orbital node re-renders against whichever company this
+ * popover selects; every Quick Action attaches to whichever project it selects
+ * (the two-level model — a business, and a shared Project within it). The
+ * shell itself never branches per company/project, only the data underneath
+ * it does.
  */
 export default function WorkspaceSwitcherPopover({
   open,
@@ -22,8 +26,16 @@ export default function WorkspaceSwitcherPopover({
   anchor: { x: number; y: number };
 }) {
   const { companies, activeCompanyId, setActiveCompanyId, createCompany, loading } = useCompany();
+  const {
+    projects,
+    activeProjectId,
+    setActiveProjectId,
+    createProject,
+    loading: projectsLoading,
+  } = useProject();
   const prompt = usePrompt();
   const toast = useToast();
+  const navigate = useNavigate();
 
   async function handleNewCompany() {
     const values = await prompt({
@@ -37,6 +49,22 @@ export default function WorkspaceSwitcherPopover({
       onClose();
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Failed to create company.", "error");
+    }
+  }
+
+  async function handleNewProject() {
+    const values = await prompt({
+      title: "New Project",
+      fields: [{ key: "name", label: "Project name" }],
+      confirmLabel: "Create",
+    });
+    if (values === null || !values.name.trim()) return;
+    try {
+      const project = await createProject(values.name.trim());
+      onClose();
+      navigate(`/projects/${project.id}`);
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Failed to create project.", "error");
     }
   }
 
@@ -59,7 +87,7 @@ export default function WorkspaceSwitcherPopover({
                 Switch Workspace
               </p>
             </div>
-            <div className="max-h-64 overflow-y-auto py-1">
+            <div className="max-h-48 overflow-y-auto py-1">
               {loading && <div className="skeleton m-2 h-9 rounded-lg" />}
               {!loading &&
                 companies.map((c) => (
@@ -86,6 +114,59 @@ export default function WorkspaceSwitcherPopover({
               <Plus className="h-3.5 w-3.5" />
               New Workspace
             </button>
+
+            {/* Active project — the shared container Quick Actions attach to. */}
+            <div className="mt-1 flex items-center gap-2 border-t border-jarvis-border/60 px-2 pb-2 pt-2.5">
+              <FolderKanban className="h-3.5 w-3.5 text-jarvis-cyan" />
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-jarvis-muted">
+                Active Project
+              </p>
+            </div>
+            <div className="max-h-40 overflow-y-auto py-1">
+              {projectsLoading && <div className="skeleton m-2 h-9 rounded-lg" />}
+              {!projectsLoading &&
+                projects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      setActiveProjectId(p.id);
+                      onClose();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-jarvis-muted transition-colors duration-150 hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    {p.is_default && (
+                      <span className="shrink-0 rounded bg-jarvis-panel2 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-jarvis-muted">
+                        default
+                      </span>
+                    )}
+                    {p.id === activeProjectId && <Check className="h-3.5 w-3.5 shrink-0 text-jarvis-cyan" />}
+                  </button>
+                ))}
+              {!projectsLoading && projects.length === 0 && (
+                <p className="px-2.5 py-3 text-xs text-jarvis-muted">No projects yet.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-1 border-t border-jarvis-border/60 pt-1">
+              <button
+                onClick={handleNewProject}
+                className="flex flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-jarvis-muted transition-colors duration-150 hover:text-jarvis-cyan"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                New Project
+              </button>
+              {activeProjectId && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    navigate(`/projects/${activeProjectId}`);
+                  }}
+                  className="rounded-lg px-2.5 py-2 text-xs font-medium text-jarvis-cyan/80 transition-colors duration-150 hover:text-jarvis-cyan"
+                >
+                  Open →
+                </button>
+              )}
+            </div>
           </motion.div>
         </>
       )}
