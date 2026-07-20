@@ -1,0 +1,47 @@
+from fastapi import APIRouter
+
+from app.api.v1.endpoints import (
+    agents,
+    calendar,
+    capabilities,
+    chat,
+    company,
+    dashboard,
+    drive,
+    gmail,
+    health,
+    integrations,
+    market,
+    memory,
+    plugins,
+    projects,
+    settings,
+    shopify,
+    tasks,
+    workspaces,
+)
+from app.auth.router import router as auth_router
+
+api_router = APIRouter()
+
+api_router.include_router(health.router)
+api_router.include_router(auth_router)
+api_router.include_router(chat.router)
+api_router.include_router(plugins.router)
+api_router.include_router(projects.router)
+api_router.include_router(tasks.router)
+api_router.include_router(workspaces.router)
+api_router.include_router(agents.router)
+api_router.include_router(company.router)
+api_router.include_router(integrations.router)
+api_router.include_router(settings.router)
+api_router.include_router(memory.router)
+api_router.include_router(market.router)
+api_router.include_router(capabilities.capabilities_router)
+api_router.include_router(capabilities.approvals_router)
+api_router.include_router(capabilities.scheduled_jobs_router)
+api_router.include_router(gmail.router)
+api_router.include_router(calendar.router)
+api_router.include_router(drive.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(shopify.router)

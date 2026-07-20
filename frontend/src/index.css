@@ -1,0 +1,278 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Light theme is the default palette; .dark (toggled by ThemeContext)
+     overrides every token below. Values are "R G B" triples (no commas, no
+     rgb() wrapper) so Tailwind can apply opacity modifiers like /50. */
+  :root {
+    color-scheme: light;
+    --jarvis-bg: 245 247 251;
+    --jarvis-panel: 255 255 255;
+    --jarvis-panel2: 238 241 247;
+    --jarvis-panel3: 227 231 240;
+    --jarvis-border: 215 220 230;
+    --jarvis-border-soft: 185 193 209;
+    --jarvis-cyan: 8 145 178;
+    --jarvis-cyan2: 14 116 144;
+    --jarvis-cyan-dim: 103 232 249;
+    --jarvis-blue: 37 99 235;
+    --jarvis-violet: 124 58 237;
+    --jarvis-amber: 217 119 6;
+    --jarvis-rose: 225 29 72;
+    --jarvis-emerald: 5 150 105;
+    --jarvis-text: 15 21 33;
+    --jarvis-muted: 91 100 120;
+    --jarvis-faint: 138 147 168;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --jarvis-bg: 5 7 12;
+    --jarvis-panel: 10 14 23;
+    --jarvis-panel2: 15 21 33;
+    --jarvis-panel3: 20 27 43;
+    --jarvis-border: 28 35 51;
+    --jarvis-border-soft: 35 43 61;
+    --jarvis-cyan: 45 212 240;
+    --jarvis-cyan2: 6 182 212;
+    --jarvis-cyan-dim: 14 116 144;
+    --jarvis-blue: 59 130 246;
+    --jarvis-violet: 139 92 246;
+    --jarvis-amber: 245 158 11;
+    --jarvis-rose: 244 63 94;
+    --jarvis-emerald: 16 185 129;
+    --jarvis-text: 238 242 249;
+    --jarvis-muted: 124 138 163;
+    --jarvis-faint: 72 83 107;
+  }
+
+  body {
+    @apply bg-jarvis-bg text-jarvis-text antialiased;
+    background-image: theme(backgroundImage.aurora);
+    background-attachment: fixed;
+    background-size: 140% 140%, 140% 140%;
+    background-position: 0% 0%, 100% 0%;
+    /* Slow ambient drift so the whole app feels quietly alive rather than
+       a static gradient — same keyframe JarvisCore-adjacent effects use. */
+    animation: auroraDrift 18s ease-in-out infinite;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body {
+      animation: none;
+    }
+  }
+
+  * {
+    scrollbar-color: rgba(45, 212, 240, 0.25) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(45, 212, 240, 0.22);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(45, 212, 240, 0.4);
+  }
+
+  ::selection {
+    background: rgba(45, 212, 240, 0.25);
+    color: rgb(var(--jarvis-text));
+  }
+}
+
+@layer components {
+  /* Core glass surface — used across every panel/card in the app. Subtle
+     gradient sheen + soft ambient shadow + hairline border reads as premium
+     glass rather than a flat dark box. */
+  .hud-panel {
+    @apply relative rounded-2xl border border-jarvis-border/70 bg-jarvis-panel/65 backdrop-blur-2xl;
+    background-image: theme(backgroundImage.glass-sheen);
+    box-shadow:
+      theme(boxShadow.glass-edge),
+      theme(boxShadow.elevated);
+    overflow: hidden;
+    transition:
+      transform 0.35s theme(transitionTimingFunction.premium),
+      box-shadow 0.35s theme(transitionTimingFunction.premium),
+      border-color 0.35s theme(transitionTimingFunction.premium);
+  }
+
+  /* Subtle premium lift + a one-shot holographic sheen sweep on hover —
+     dialed back (low opacity, brief) so it reads as quality, not gimmick. */
+  .hud-panel:hover {
+    @apply border-jarvis-cyan/30;
+    transform: translateY(-2px);
+    box-shadow:
+      theme(boxShadow.glass-edge),
+      theme(boxShadow.elevated-lg),
+      theme(boxShadow.glow-sm);
+  }
+  .hud-panel::after {
+    content: "";
+    position: absolute;
+    inset: -50%;
+    background: linear-gradient(
+      100deg,
+      transparent 40%,
+      rgba(45, 212, 240, 0.12) 50%,
+      transparent 60%
+    );
+    opacity: 0;
+    pointer-events: none;
+  }
+  .hud-panel:hover::after {
+    opacity: 1;
+    animation: holoSweep 1.1s theme(transitionTimingFunction.premium);
+  }
+
+  /* Ambient floating glow layer — fixed behind page content, purely
+     decorative depth ("trippy" without hurting legibility). Each orb is a
+     large, heavily blurred radial gradient drifting on its own float cycle. */
+  .ambient-orbs {
+    @apply pointer-events-none fixed inset-0 overflow-hidden;
+    z-index: -1;
+  }
+  .ambient-orbs > span {
+    @apply absolute rounded-full opacity-40 blur-3xl;
+    animation: float 9s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hud-panel,
+    .ambient-orbs > span {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
+  /* Subtle corner accents — an Iron-Man HUD nod, dialed back to thin,
+     soft-glow brackets rather than the heavier arcade-HUD look. */
+  .hud-corner::before,
+  .hud-corner::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-color: rgba(45, 212, 240, 0.45);
+    pointer-events: none;
+    transition: border-color 0.3s theme(transitionTimingFunction.premium);
+  }
+  .hud-corner::before {
+    top: -1px;
+    left: -1px;
+    border-top: 1.5px solid;
+    border-left: 1.5px solid;
+    border-top-left-radius: 1rem;
+  }
+  .hud-corner::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 1.5px solid;
+    border-right: 1.5px solid;
+    border-bottom-right-radius: 1rem;
+  }
+
+  .text-glow {
+    text-shadow: 0 0 16px rgba(45, 212, 240, 0.5);
+  }
+
+  /* Tabular/mono numerals for data-dense surfaces (Bloomberg-terminal feel) */
+  .font-data {
+    @apply font-mono tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Skeleton loading shimmer for premium empty/loading states */
+  .skeleton {
+    @apply rounded-lg bg-jarvis-panel2/60;
+    animation: shimmer 2s linear infinite;
+    background-image: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.02) 25%,
+      rgba(255, 255, 255, 0.06) 37%,
+      rgba(255, 255, 255, 0.02) 63%
+    );
+    background-size: 200% 100%;
+  }
+
+  /* Standard interactive-row/button micro-lift used throughout */
+  .press-scale {
+    @apply transition-transform duration-150 active:scale-[0.98];
+  }
+
+  /* Thin vector line from the AI Core to an orbital node — a soft base
+     stroke plus a short animated dash "pulse" travelling along it, read as
+     data quietly flowing between the core and its modules. The SVG applies
+     a soft glow filter (see ConnectionLines) so the lines feel luminous
+     rather than hairline-flat. */
+  .connection-line {
+    opacity: 0.18;
+    stroke-dasharray: 3 9;
+    animation: dashFlow 1.6s linear infinite;
+    transition: opacity 0.6s ease;
+  }
+  /* Brighter, quicker flow while Jarvis is processing — data "moving." */
+  .connection-line--active {
+    opacity: 0.4;
+    animation-duration: 0.8s;
+  }
+
+  /* Depth layers shifted a few px by the pointer for parallax — hinting the
+     shell has real depth without moving anything enough to hurt legibility.
+     GPU-composited via translate3d; the actual offset is written to CSS
+     custom properties by OrbitalHome's rAF handler, so React never
+     re-renders on mouse move. */
+  .parallax-layer {
+    will-change: transform;
+    transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* One ambient particle in the core's field — tiny, blurred, twinkling. */
+  .core-particle {
+    position: absolute;
+    border-radius: 9999px;
+    background: rgb(var(--jarvis-cyan));
+    box-shadow: 0 0 6px rgba(45, 212, 240, 0.8);
+    animation: particleTwinkle 3s ease-in-out infinite;
+  }
+
+  /* Faint scattered starfield behind the orbital shell — a handful of
+     radial-gradient dots at fixed offsets, drifting almost imperceptibly. */
+  .starfield {
+    @apply pointer-events-none absolute inset-0 opacity-60;
+    background-image:
+      radial-gradient(1px 1px at 10% 20%, rgba(45, 212, 240, 0.5), transparent),
+      radial-gradient(1px 1px at 25% 65%, rgba(255, 255, 255, 0.35), transparent),
+      radial-gradient(1.5px 1.5px at 40% 15%, rgba(45, 212, 240, 0.4), transparent),
+      radial-gradient(1px 1px at 60% 80%, rgba(255, 255, 255, 0.3), transparent),
+      radial-gradient(1.5px 1.5px at 75% 35%, rgba(139, 92, 246, 0.35), transparent),
+      radial-gradient(1px 1px at 88% 60%, rgba(45, 212, 240, 0.45), transparent),
+      radial-gradient(1px 1px at 15% 88%, rgba(255, 255, 255, 0.3), transparent),
+      radial-gradient(1.5px 1.5px at 92% 12%, rgba(45, 212, 240, 0.4), transparent);
+    animation: starDrift 24s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .connection-line,
+    .connection-line--active,
+    .starfield,
+    .core-particle {
+      animation: none !important;
+    }
+    .parallax-layer {
+      transform: none !important;
+      transition: none !important;
+    }
+  }
+}

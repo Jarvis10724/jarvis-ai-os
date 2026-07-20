@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Data
+data/*.db
+data/logs/*.log
+data/uploads/*
+!data/uploads/.gitkeep
+# SQLite databases in any location (dev/test data must never be committed)
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Alembic
+backend/alembic/versions/*.py
+!backend/alembic/versions/.gitkeep

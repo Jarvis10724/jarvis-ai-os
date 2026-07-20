@@ -1,0 +1,94 @@
+import { AnimatePresence, motion } from "framer-motion";
+import { Building2, Check, Plus } from "lucide-react";
+
+import { useCompany } from "@/context/CompanyContext";
+import { usePrompt } from "@/context/PromptContext";
+import { useToast } from "@/context/ToastContext";
+import { ApiError } from "@/api/client";
+
+/**
+ * The single control for "which company is active." Every workspace-scoped
+ * orbital node re-renders against whichever company this popover selects —
+ * the shell itself never branches per company, only the data underneath it
+ * does (see OrbitalHome's workspace ring, keyed by activeCompanyId).
+ */
+export default function WorkspaceSwitcherPopover({
+  open,
+  onClose,
+  anchor,
+}: {
+  open: boolean;
+  onClose: () => void;
+  anchor: { x: number; y: number };
+}) {
+  const { companies, activeCompanyId, setActiveCompanyId, createCompany, loading } = useCompany();
+  const prompt = usePrompt();
+  const toast = useToast();
+
+  async function handleNewCompany() {
+    const values = await prompt({
+      title: "New Workspace",
+      fields: [{ key: "name", label: "Company name" }],
+      confirmLabel: "Create",
+    });
+    if (values === null || !values.name.trim()) return;
+    try {
+      await createCompany(values.name.trim());
+      onClose();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Failed to create company.", "error");
+    }
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={onClose} />
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.96 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="hud-panel hud-corner fixed z-50 w-64 p-2"
+            style={{ left: anchor.x, top: anchor.y, transform: "translate(-50%, 12px)" }}
+          >
+            <div className="flex items-center gap-2 border-b border-jarvis-border/60 px-2 pb-2">
+              <Building2 className="h-3.5 w-3.5 text-jarvis-cyan" />
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-jarvis-muted">
+                Switch Workspace
+              </p>
+            </div>
+            <div className="max-h-64 overflow-y-auto py-1">
+              {loading && <div className="skeleton m-2 h-9 rounded-lg" />}
+              {!loading &&
+                companies.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      setActiveCompanyId(c.id);
+                      onClose();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-jarvis-muted transition-colors duration-150 hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                    {c.id === activeCompanyId && <Check className="h-3.5 w-3.5 shrink-0 text-jarvis-cyan" />}
+                  </button>
+                ))}
+              {!loading && companies.length === 0 && (
+                <p className="px-2.5 py-3 text-xs text-jarvis-muted">No workspaces yet.</p>
+              )}
+            </div>
+            <button
+              onClick={handleNewCompany}
+              className="flex w-full items-center gap-2 rounded-lg border-t border-jarvis-border/60 px-2.5 py-2 pt-2.5 text-left text-sm text-jarvis-muted transition-colors duration-150 hover:text-jarvis-cyan"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New Workspace
+            </button>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}

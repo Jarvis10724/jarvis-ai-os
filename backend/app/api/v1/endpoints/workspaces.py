@@ -1,0 +1,612 @@
+"""
+Quick-Action workspaces — persistent, streaming "studio" applications
+(Website, Logo, Product, Research, Code, Automation). Each session keeps its
+own conversation history AND a structured, action-specific state (sitemap,
+concepts, sources, launch checklist, ...), auto-attaches to a real Project,
+auto-creates Tasks for its work, and records context into AI Memory — all
+company-scoped and restorable after a restart (everything lives in
+workspace_sessions).
+
+The message endpoint streams the AI response live via Server-Sent Events and,
+on completion, merges the model's ``jarvis-state`` block into the workspace's
+structured state so the studio panels stay filled with real generated work.
+"""
+import json
+import time
+
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from app.ai_providers.base import Message
+from app.ai_providers.factory import get_ai_provider, get_image_provider
+from app.auth.dependencies import CurrentUser
+from app.core import memory_service
+from app.core.workspace_actions import WORKSPACE_ACTIONS, build_system_prompt, get_action
+from app.core import workspace_state as ws
+from app.db.models.company import Company
+from app.db.models.project import Project
+from app.db.models.task import Task
+from app.db.models.workspace_session import WorkspaceSession
+from app.db.session import SessionLocal, get_db
+from app.exceptions import NotFoundError, ValidationError
+from app.logging_config import get_logger
+
+router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+logger = get_logger(__name__)
+
+MAX_HISTORY_TURNS = 24
+
+
+# --- Schemas --------------------------------------------------------------
+
+
+class WorkspaceCreate(BaseModel):
+    action: str
+    company_id: str | None = None
+    title: str | None = None
+
+
+class WorkspaceUpdate(BaseModel):
+    title: str | None = None
+    status: str | None = None
+
+
+class MessageIn(BaseModel):
+    content: str
+    #: Optional stage the user is working in (e.g. "sitemap") — steers the
+    #: turn toward that panel. Purely a hint; the model still owns the output.
+    stage: str | None = None
+
+
+class ArtifactIn(BaseModel):
+    title: str
+    content: str
+    kind: str = "document"
+    stage: str = ""
+
+
+class AttachProjectIn(BaseModel):
+    project_id: str
+
+
+class TaskIn(BaseModel):
+    title: str
+    status: str = "backlog"
+
+
+class ImageIn(BaseModel):
+    prompt: str
+    concept_id: str | None = None
+    name: str | None = None
+    size: str = "1024x1024"
+
+
+# --- Helpers --------------------------------------------------------------
+
+
+def _owned_session(db: Session, session_id: str, owner_id: str) -> WorkspaceSession:
+    s = (
+        db.query(WorkspaceSession)
+        .filter(WorkspaceSession.id == session_id, WorkspaceSession.owner_id == owner_id)
+        .first()
+    )
+    if not s:
+        raise NotFoundError(f"Workspace '{session_id}' not found")
+    return s
+
+
+def _assert_company(db: Session, company_id: str | None, owner_id: str) -> None:
+    if company_id is None:
+        return
+    exists = db.query(Company.id).filter(Company.id == company_id, Company.owner_id == owner_id).first()
+    if not exists:
+        raise NotFoundError(f"Company '{company_id}' not found")
+
+
+def _serialize(db: Session, s: WorkspaceSession, *, full: bool) -> dict:
+    action = get_action(s.action)
+    messages = ws.load_json(s.messages_json, [])
+    artifacts = ws.load_json(s.artifacts_json, [])
+    data = {
+        "id": s.id,
+        "action": s.action,
+        "action_label": action.label if action else s.action,
+        "company_id": s.company_id,
+        "title": s.title,
+        "project_id": s.project_id,
+        "status": s.status,
+        "message_count": len(messages),
+        "artifact_count": len(artifacts),
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    }
+    if full:
+        data["messages"] = messages
+        data["artifacts"] = artifacts
+        data["state"] = ws.load_json(s.state_json, {})
+        data["config"] = action.public() if action else None
+        tasks = (
+            db.query(Task).filter(Task.project_id == s.project_id).order_by(Task.created_at.asc()).all()
+            if s.project_id
+            else []
+        )
+        data["tasks"] = [
+            {"id": t.id, "title": t.title, "status": t.status, "due_date": t.due_date} for t in tasks
+        ]
+    return data
+
+
+def _create_task(db: Session, *, owner_id, company_id, project_id, title, status) -> Task:
+    task = Task(
+        owner_id=owner_id,
+        company_id=company_id,
+        project_id=project_id,
+        title=title[:255],
+        status=status,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+# --- CRUD -----------------------------------------------------------------
+
+
+@router.get("/actions")
+def list_actions(current_user: CurrentUser):
+    """The catalog of workspace types (labels + their structured stages)."""
+    return [a.public() for a in WORKSPACE_ACTIONS.values()]
+
+
+@router.get("/recent")
+def recent_sessions(
+    current_user: CurrentUser,
+    db: Session = Depends(get_db),
+    company_id: str | None = None,
+    limit: int = 8,
+):
+    """Most-recently-touched sessions across ALL actions (for the "Recent"
+    switcher). Company-scoped like everything else."""
+    q = db.query(WorkspaceSession).filter(
+        WorkspaceSession.owner_id == current_user.id, WorkspaceSession.status == "active"
+    )
+    if company_id == "none":
+        q = q.filter(WorkspaceSession.company_id.is_(None))
+    elif company_id:
+        q = q.filter(WorkspaceSession.company_id == company_id)
+    sessions = q.order_by(WorkspaceSession.updated_at.desc()).limit(min(limit, 50)).all()
+    return [_serialize(db, s, full=False) for s in sessions]
+
+
+@router.get("")
+def list_sessions(
+    current_user: CurrentUser,
+    db: Session = Depends(get_db),
+    company_id: str | None = None,
+    action: str | None = None,
+    status: str | None = "active",
+):
+    q = db.query(WorkspaceSession).filter(WorkspaceSession.owner_id == current_user.id)
+    if action:
+        q = q.filter(WorkspaceSession.action == action)
+    if status and status != "all":
+        q = q.filter(WorkspaceSession.status == status)
+    if company_id == "none":
+        q = q.filter(WorkspaceSession.company_id.is_(None))
+    elif company_id:
+        q = q.filter(WorkspaceSession.company_id == company_id)
+    sessions = q.order_by(WorkspaceSession.updated_at.desc()).all()
+    return [_serialize(db, s, full=False) for s in sessions]
+
+
+@router.post("", status_code=201)
+def create_session(payload: WorkspaceCreate, current_user: CurrentUser, db: Session = Depends(get_db)):
+    action = get_action(payload.action)
+    if action is None:
+        raise ValidationError(f"Unknown workspace action '{payload.action}'.")
+    _assert_company(db, payload.company_id, current_user.id)
+
+    title = (payload.title or "").strip() or f"New {action.label}"
+
+    # Attach to a real Project so workspace output lives in Project Manager
+    # too. Company-scoped when a company is active.
+    project = Project(
+        owner_id=current_user.id,
+        name=f"{action.label}: {title}",
+        description=f"Auto-created by the {action.label} workspace.",
+        status="active",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    session = WorkspaceSession(
+        owner_id=current_user.id,
+        company_id=payload.company_id,
+        action=payload.action,
+        title=title,
+        project_id=project.id,
+        status="active",
+        messages_json="[]",
+        artifacts_json="[]",
+        state_json="{}",
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    # A kick-off task so the workspace shows up as real, tracked work.
+    _create_task(
+        db,
+        owner_id=current_user.id,
+        company_id=payload.company_id,
+        project_id=project.id,
+        title=f"Define the {action.memory_noun} brief",
+        status="backlog",
+    )
+
+    return _serialize(db, session, full=True)
+
+
+@router.get("/{session_id}")
+def get_session(session_id: str, current_user: CurrentUser, db: Session = Depends(get_db)):
+    return _serialize(db, _owned_session(db, session_id, current_user.id), full=True)
+
+
+@router.patch("/{session_id}")
+def update_session(
+    session_id: str, payload: WorkspaceUpdate, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    s = _owned_session(db, session_id, current_user.id)
+    if payload.title is not None:
+        s.title = payload.title.strip()[:255] or s.title
+    if payload.status is not None:
+        if payload.status not in ("active", "archived"):
+            raise ValidationError("status must be 'active' or 'archived'.")
+        s.status = payload.status
+    db.commit()
+    db.refresh(s)
+    return _serialize(db, s, full=True)
+
+
+@router.delete("/{session_id}", status_code=204)
+def delete_session(session_id: str, current_user: CurrentUser, db: Session = Depends(get_db)):
+    s = _owned_session(db, session_id, current_user.id)
+    db.delete(s)
+    db.commit()
+
+
+# --- Attachments & artifacts ----------------------------------------------
+
+
+@router.post("/{session_id}/artifacts")
+def save_artifact(
+    session_id: str, payload: ArtifactIn, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    """Explicitly save/export a deliverable as a versioned artifact (the model
+    autosaves too; this is for the "Save this version" affordance)."""
+    s = _owned_session(db, session_id, current_user.id)
+    arts = ws.load_json(s.artifacts_json, [])
+    artifact = ws.make_artifact(
+        title=payload.title,
+        content=payload.content,
+        kind=payload.kind,
+        stage=payload.stage,
+        version=ws.next_version(arts, payload.title),
+    )
+    arts.append(artifact)
+    s.artifacts_json = json.dumps(arts)
+    db.commit()
+    return artifact
+
+
+@router.post("/{session_id}/attach-project")
+def attach_project(
+    session_id: str, payload: AttachProjectIn, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    """Re-point this workspace at an existing Project the user owns (so its
+    tasks/output land in that project instead of the auto-created one)."""
+    s = _owned_session(db, session_id, current_user.id)
+    project = (
+        db.query(Project)
+        .filter(Project.id == payload.project_id, Project.owner_id == current_user.id)
+        .first()
+    )
+    if not project:
+        raise NotFoundError(f"Project '{payload.project_id}' not found")
+    s.project_id = project.id
+    db.commit()
+    db.refresh(s)
+    return _serialize(db, s, full=True)
+
+
+@router.post("/{session_id}/tasks", status_code=201)
+def add_task(session_id: str, payload: TaskIn, current_user: CurrentUser, db: Session = Depends(get_db)):
+    """Attach a new tracked Task to this workspace's project."""
+    s = _owned_session(db, session_id, current_user.id)
+    task = _create_task(
+        db,
+        owner_id=current_user.id,
+        company_id=s.company_id,
+        project_id=s.project_id,
+        title=payload.title,
+        status=payload.status,
+    )
+    return {"id": task.id, "title": task.title, "status": task.status, "due_date": task.due_date}
+
+
+# --- Logo image generation ------------------------------------------------
+
+
+@router.get("/image/status")
+def image_status(current_user: CurrentUser):
+    """Whether real image generation is available (Logo Studio uses this to
+    decide between generating a mark and recording the concept spec)."""
+    provider = get_image_provider()
+    return {"configured": provider is not None, "provider": provider.name if provider else None}
+
+
+@router.post("/{session_id}/image")
+async def generate_image(
+    session_id: str, payload: ImageIn, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    """Generate a real logo concept image and store it as an artifact + into
+    the workspace's `state.images`. If no image provider is configured this
+    returns `configured: false` — it never fabricates an image."""
+    s = _owned_session(db, session_id, current_user.id)
+    prompt = payload.prompt.strip()
+    if not prompt:
+        raise ValidationError("An image prompt is required.")
+
+    provider = get_image_provider()
+    if provider is None:
+        return {
+            "configured": False,
+            "message": "Image generation isn't configured — set OPENAI_API_KEY to enable the Logo Studio's generation seam. The concept spec is saved and can be handed to a designer.",
+        }
+
+    result = await provider.generate_image(prompt, size=payload.size)
+    data_url = f"data:image/png;base64,{result.b64_png}"
+
+    # Store the image bytes as an artifact (so it survives + versions), and a
+    # lightweight record (data URL) into structured state for the panel.
+    arts = ws.load_json(s.artifacts_json, [])
+    title = payload.name or f"Logo concept {len(arts) + 1}"
+    artifact = ws.make_artifact(
+        title=title, content=data_url, kind="image", stage="images",
+        version=ws.next_version(arts, title),
+    )
+    arts.append(artifact)
+    s.artifacts_json = json.dumps(arts)
+
+    state = ws.load_json(s.state_json, {})
+    images = list(state.get("images") or [])
+    images.append({
+        "id": artifact["id"],
+        "concept_id": payload.concept_id,
+        "name": title,
+        "prompt": prompt,
+        "data_url": data_url,
+        "model": result.model,
+        "ts": time.time(),
+    })
+    state["images"] = images
+    s.state_json = json.dumps(state)
+    db.commit()
+
+    return {"configured": True, "image": {**artifact, "concept_id": payload.concept_id}}
+
+
+# --- Research web-search seam ---------------------------------------------
+
+
+@router.get("/search/status")
+def search_status(current_user: CurrentUser):
+    """Whether live web search is wired for the Research Desk. No provider is
+    configured in this build, so the Desk reasons from model knowledge and
+    marks its sources as derived — this endpoint reports that honestly."""
+    return {
+        "configured": False,
+        "message": "Live web search isn't configured. Research runs from model knowledge; sources are marked as derived, and no URLs are fabricated.",
+    }
+
+
+# --- Streaming message ----------------------------------------------------
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+async def _structure_state(action, request_text: str, deliverable_text: str) -> dict | None:
+    """Fallback structuring pass: when a turn's prose didn't carry a parseable
+    ``jarvis-state`` block (e.g. a long research report that ran past it), ask
+    the model to extract the structured state from its own deliverable so the
+    studio panels still populate. Returns a state patch or None; never raises."""
+    if not action.state_schema:
+        return None
+    schema_lines = "\n".join(f"- {k}: {v}" for k, v in action.state_schema.items())
+    system = (
+        "You convert a finished deliverable into structured workspace state. "
+        "Return ONLY a single JSON object — no prose, no markdown fence. Use ONLY "
+        "these keys, and include only the ones the deliverable actually supports "
+        "(omit any you'd have to invent):\n" + schema_lines
+    )
+    user = (
+        f"Original request:\n{request_text}\n\nDeliverable produced:\n{deliverable_text}\n\n"
+        "Return the JSON state object now."
+    )
+    try:
+        provider = get_ai_provider()
+        result = await provider.complete(
+            messages=[Message(role="system", content=system), Message(role="user", content=user)],
+            max_tokens=4096,
+            temperature=0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("workspace_structure_fallback_failed", error=str(exc))
+        return None
+    return ws.parse_loose_json(result.text)
+
+
+@router.post("/{session_id}/message")
+def send_message(
+    session_id: str, payload: MessageIn, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    """Append the user's message, then stream Jarvis's response token-by-token
+    as SSE. On completion the assistant turn is saved (minus its jarvis-state
+    block), that block is merged into the workspace's structured state, a
+    versioned deliverable artifact is stored, the turn's Task is advanced, and
+    context is written to AI Memory — so nothing is lost if the browser closes
+    mid-stream (the user turn + task are persisted before streaming begins)."""
+    content = payload.content.strip()
+    if not content:
+        raise ValidationError("Message content is required.")
+
+    session = _owned_session(db, session_id, current_user.id)
+    action = get_action(session.action)
+    if action is None:
+        raise ValidationError(f"Unknown workspace action '{session.action}'.")
+
+    # Persist the user turn immediately (survives a mid-stream disconnect).
+    history = ws.load_json(session.messages_json, [])
+    stage_note = f"\n\n(Working in the '{payload.stage}' stage.)" if payload.stage else ""
+    history.append({"role": "user", "content": content})
+    session.messages_json = json.dumps(history)
+    if session.title.startswith("New "):
+        session.title = content[:80]  # first message names the session
+    db.commit()
+
+    # Track this turn as a real Task.
+    turn_task = _create_task(
+        db,
+        owner_id=current_user.id,
+        company_id=session.company_id,
+        project_id=session.project_id,
+        title=content[:120],
+        status="in_progress",
+    )
+
+    owner_id = current_user.id
+    company_id = session.company_id
+    project_id = session.project_id
+    task_id = turn_task.id
+    stage = payload.stage or ""
+    current_state = ws.load_json(session.state_json, {})
+
+    # Company context for the system prompt.
+    company_line = ""
+    if company_id:
+        company = db.query(Company).filter(Company.id == company_id).first()
+        if company:
+            company_line = f"\n\nActive company: {company.name!r}. Tailor everything to this business."
+
+    provider = get_ai_provider()
+    system_prompt = build_system_prompt(action, company_line=company_line, state=current_state)
+    convo = [Message(role=m["role"], content=m["content"]) for m in history[-MAX_HISTORY_TURNS:]]
+    if stage_note and convo:
+        convo[-1] = Message(role=convo[-1].role, content=convo[-1].content + stage_note)
+    provider_messages = [Message(role="system", content=system_prompt)] + convo
+
+    async def _persist(full_text: str, errored: bool) -> None:
+        """Save the assistant turn, merge structured state, store a versioned
+        artifact, advance the task, and write memory. Runs from the generator's
+        `finally`, so even a mid-stream client disconnect saves whatever was
+        generated. Uses a fresh session (the request's db is closing)."""
+        saved = not errored and bool(full_text.strip())
+        known_keys = list(action.state_schema)
+        visible, patch = ws.extract_state_block(full_text, known_keys) if saved else (full_text, None)
+        # If the model didn't emit a usable state block — missing, unparseable,
+        # or an empty {} (common for long prose deliverables like a research
+        # report) — recover the structured state with a lightweight second pass
+        # so the studio panels still fill.
+        if saved and not patch:
+            patch = await _structure_state(action, content, visible)
+        write_db = SessionLocal()
+        try:
+            s = write_db.query(WorkspaceSession).filter(WorkspaceSession.id == session_id).first()
+            if s and saved:
+                msgs = ws.load_json(s.messages_json, [])
+                msgs.append({"role": "assistant", "content": visible})
+                s.messages_json = json.dumps(msgs)
+
+                arts = ws.load_json(s.artifacts_json, [])
+                art_title = content[:80]
+                arts.append(
+                    ws.make_artifact(
+                        title=art_title, content=visible, kind="document", stage=stage,
+                        version=ws.next_version(arts, art_title),
+                    )
+                )
+                s.artifacts_json = json.dumps(arts)
+
+                if patch:
+                    merged = ws.deep_merge(ws.load_json(s.state_json, {}), patch)
+                    s.state_json = json.dumps(merged)
+                write_db.commit()
+
+            t = write_db.query(Task).filter(Task.id == task_id).first()
+            if t:
+                t.status = "review" if saved else "backlog"
+                write_db.commit()
+
+            if saved:
+                try:
+                    await memory_service.record_memory(
+                        write_db,
+                        owner_id=owner_id,
+                        kind=action.memory_kind,
+                        title=f"{action.label}: {content[:100]}",
+                        content=f"Request: {content}\n\n{action.memory_noun.title()}:\n{visible}",
+                        scope="company" if company_id else "organization",
+                        company_id=company_id,
+                        project_id=project_id,
+                        source="workspace",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("workspace_memory_write_failed", error=str(exc))
+        finally:
+            write_db.close()
+
+    async def event_stream():
+        full_text = ""
+        errored = False
+        persisted = False
+        streamer = ws.VisibleStreamer()
+        try:
+            try:
+                # Studio turns are deliverables (a full sitemap + copy, a set of
+                # logo concepts, a research report) plus a structured-state block,
+                # so they need a much larger budget than a chat reply — otherwise
+                # the trailing jarvis-state fence gets truncated.
+                async for chunk in provider.stream(messages=provider_messages, max_tokens=8192):
+                    full_text += chunk
+                    visible_chunk = streamer.feed(chunk)
+                    if visible_chunk:
+                        yield _sse({"type": "token", "text": visible_chunk})
+            except Exception as exc:  # noqa: BLE001
+                errored = True
+                logger.error("workspace_stream_failed", session_id=session_id, error=str(exc))
+                yield _sse({"type": "error", "message": "The AI provider stream failed — check the API key in .env."})
+            else:
+                tail = streamer.flush()
+                if tail:
+                    yield _sse({"type": "token", "text": tail})
+                # Persist BEFORE signaling done — including the structuring
+                # fallback, which can add a couple seconds — so the client's
+                # refetch-on-done always sees the saved structured state.
+                await _persist(full_text, errored=False)
+                persisted = True
+                visible, _ = ws.extract_state_block(full_text, list(action.state_schema))
+                yield _sse({"type": "done", "task_id": task_id, "text": visible})
+        finally:
+            # Covers client disconnect / provider error mid-stream: persist
+            # whatever we have so nothing is lost. Skipped if we already
+            # persisted on normal completion above.
+            if not persisted:
+                await _persist(full_text, errored)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
