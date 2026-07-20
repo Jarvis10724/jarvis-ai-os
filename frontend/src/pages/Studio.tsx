@@ -27,7 +27,7 @@ import MarkdownLite from "@/components/MarkdownLite";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
-import { AutomationBanner, StagePanel, type PanelCtx } from "@/pages/studio/panels";
+import { AutomationBanner, StagePanel, stageHasValue, type PanelCtx } from "@/pages/studio/panels";
 import WebsiteBuildBar from "@/pages/studio/WebsiteBuildBar";
 import type { WorkspaceDetail, WorkspaceSummary } from "@/types";
 
@@ -138,12 +138,18 @@ export default function StudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, companyKey, meta]);
 
-  // Default the workspace panel to the first stage of the current session.
+  // When a different session is opened, restore the panel to the furthest-along
+  // stage that already has content (e.g. Preview after a completed build) rather
+  // than the empty first stage — so reopening a finished website shows the work,
+  // not a blank Requirements panel. Keyed on session id so it only fires on an
+  // actual session switch, never while the user is manually navigating stages.
   useEffect(() => {
     const stages = detail?.config?.stages ?? [];
-    if (stages.length && !stages.some((s) => s.state_key === activeStage)) {
-      setActiveStage(stages[0].state_key);
-    }
+    if (!stages.length) return;
+    if (stages.some((s) => s.state_key === activeStage)) return; // keep valid selection
+    const state = detail?.state ?? {};
+    const populated = [...stages].reverse().find((s) => stageHasValue(state, s.state_key));
+    setActiveStage((populated ?? stages[0]).state_key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.id]);
 
@@ -494,6 +500,7 @@ export default function StudioPage() {
             }}
             companyId={activeCompanyId}
             disabled={streaming}
+            onFocusStage={setActiveStage}
             onCreateModeSession={async (opts) => {
               const created = await newSession(opts);
               return created?.id ?? null;

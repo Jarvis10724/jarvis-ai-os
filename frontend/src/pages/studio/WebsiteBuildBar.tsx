@@ -43,12 +43,15 @@ export default function WebsiteBuildBar({
   companyId,
   onCreateModeSession,
   onRefresh,
+  onFocusStage,
   disabled,
 }: {
   session: SessionInfo;
   companyId: string | null;
   onCreateModeSession: (opts: { mode: Mode; source_url?: string; client_id?: string }) => Promise<string | null>;
   onRefresh: (sessionId: string) => void;
+  /** Point the workspace panel at a stage's state_key (follow the build). */
+  onFocusStage?: (stateKey: string) => void;
   disabled?: boolean;
 }) {
   const [mode, setMode] = useState<Mode>((session.mode as Mode) || "new");
@@ -176,11 +179,15 @@ export default function WebsiteBuildBar({
           setPhase("awaiting_approval");
           abortRef.current = null;
           onRefresh(buildIdRef.current);
+          onFocusStage?.("sitemap"); // surface the plan being approved
         },
         onDone: (p) => {
           abortRef.current = null;
           onRefresh(buildIdRef.current);
-          if (p.phase === "build") setPhase("done");
+          if (p.phase === "build") {
+            setPhase("done");
+            onFocusStage?.("preview_html"); // land on the finished site
+          }
         },
         onError: (msg) => {
           setError(msg);

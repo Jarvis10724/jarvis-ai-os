@@ -45,6 +45,20 @@ const asObj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 const asStr = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
 
+/**
+ * Whether a stage's state slot holds real content. Shared by the panel (to
+ * decide empty-state vs. rendered content) and by Studio (to restore a
+ * reopened session to the furthest-along populated stage instead of the empty
+ * first stage). Keep the two in sync via this one definition.
+ */
+export function stageHasValue(state: Record<string, unknown>, stateKey: string): boolean {
+  const value = state[stateKey];
+  if (stateKey === "images") return asArray(state.images).length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value).length > 0;
+  return Boolean(asStr(value).trim());
+}
+
 // --- shared primitives ----------------------------------------------------
 
 function Empty({ hint, label, onGenerate }: { hint: string; label: string; onGenerate?: () => void }) {
@@ -756,14 +770,7 @@ export function StagePanel({
   ctx: PanelCtx;
 }) {
   const value = ctx.detail.state[stateKey];
-  const hasValue =
-    stateKey === "images"
-      ? asArray(ctx.detail.state.images).length > 0
-      : Array.isArray(value)
-        ? value.length > 0
-        : value && typeof value === "object"
-          ? Object.keys(value).length > 0
-          : Boolean(asStr(value).trim());
+  const hasValue = stageHasValue(ctx.detail.state, stateKey);
 
   const generatePrompt = `Work on the ${label} stage. ${hint}. Produce it now and update the workspace state.`;
 
