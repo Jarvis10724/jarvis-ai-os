@@ -45,9 +45,11 @@ export default {
         "glow-sm": "0 0 14px rgba(45, 212, 240, 0.20)",
         "glow-lg": "0 0 56px rgba(45, 212, 240, 0.20)",
         "inner-glow": "inset 0 0 30px rgba(45, 212, 240, 0.06)",
-        elevated: "0 12px 32px -12px rgba(0, 0, 0, 0.55)",
-        "elevated-lg": "0 24px 64px -20px rgba(0, 0, 0, 0.65)",
-        "glass-edge": "inset 0 1px 0 0 rgba(255, 255, 255, 0.05)",
+        elevated: "0 14px 36px -14px rgba(0, 0, 0, 0.6)",
+        "elevated-lg": "0 28px 70px -22px rgba(0, 0, 0, 0.7)",
+        // Crisp top highlight + faint bottom shade — reads as real glass depth.
+        "glass-edge":
+          "inset 0 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 0 rgba(0, 0, 0, 0.2)",
       },
       backgroundImage: {
         "grid-pattern":
