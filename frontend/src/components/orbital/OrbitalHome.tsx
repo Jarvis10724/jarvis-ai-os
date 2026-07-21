@@ -36,6 +36,7 @@ import { useDashboardUI } from "@/context/DashboardUIContext";
 import { useMicrophoneDevices } from "@/hooks/useMicrophoneDevices";
 import { useVoiceOrb, toCoreState } from "@/hooks/useVoiceOrb";
 import { MOCK_WATCHLIST } from "@/mock/investments";
+import { showsInvestments } from "@/lib/companyModules";
 
 interface NodeSpec {
   key: string;
@@ -69,8 +70,9 @@ type ExpandKey = "gmail" | "calendar" | "approvals" | null;
 /**
  * The immersive AI-operating-system home view. Two concentric rings orbit
  * the AI Core:
- *   - System ring (company-agnostic): Workspaces, Stocks, Voice Command,
- *     Notifications.
+ *   - System ring: Workspaces, Voice Command, Notifications — plus Stocks,
+ *     which is context-aware and only appears for investment-oriented
+ *     workspaces (see lib/companyModules.showsInvestments).
  *   - Workspace ring (company-scoped): Gmail, Calendar, Approval Center,
  *     Daily Brief, Files, Tasks, Contacts, AI Memory, Settings — every one
  *     of these reads/writes against whichever company is currently active.
@@ -282,16 +284,24 @@ export default function OrbitalHome() {
         tone: "amber",
         onClick: () => openNotifications(),
       },
-      {
-        key: "stocks",
-        icon: LineChart,
-        label: "Stocks",
-        sublabel: `${MOCK_WATCHLIST[0]?.symbol ?? "Markets"} ${
-          MOCK_WATCHLIST[0] ? (MOCK_WATCHLIST[0].change >= 0 ? "+" : "") + MOCK_WATCHLIST[0].changePercent.toFixed(1) + "%" : ""
-        }`,
-        tone: "blue",
-        onClick: () => navigate("/investments"),
-      },
+      // Stocks / market module — only for investment-oriented workspaces
+      // (e.g. Greener Capitol), hidden for SNP Group LLC.
+      ...(showsInvestments(activeCompany)
+        ? [
+            {
+              key: "stocks",
+              icon: LineChart,
+              label: "Stocks",
+              sublabel: `${MOCK_WATCHLIST[0]?.symbol ?? "Markets"} ${
+                MOCK_WATCHLIST[0]
+                  ? (MOCK_WATCHLIST[0].change >= 0 ? "+" : "") + MOCK_WATCHLIST[0].changePercent.toFixed(1) + "%"
+                  : ""
+              }`,
+              tone: "blue" as const,
+              onClick: () => navigate("/investments"),
+            },
+          ]
+        : []),
     ],
     [activeCompany, switcherOpen, openNotifications, navigate]
   );

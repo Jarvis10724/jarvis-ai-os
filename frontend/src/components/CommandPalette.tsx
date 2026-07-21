@@ -7,6 +7,7 @@ import clsx from "clsx";
 import { GLOBAL_ITEMS, SYSTEM_ITEMS, WORKSPACE_ITEMS } from "@/components/Sidebar";
 import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
+import { isModuleVisibleForCompany } from "@/lib/companyModules";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
 
 interface PaletteEntry {
@@ -35,7 +36,11 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const { projects } = useProject();
 
   const entries = useMemo<PaletteEntry[]>(() => {
-    const navItems = [...GLOBAL_ITEMS, ...(activeCompany ? WORKSPACE_ITEMS : []), ...SYSTEM_ITEMS];
+    const navItems = [
+      ...GLOBAL_ITEMS.filter((i) => isModuleVisibleForCompany(i.category, activeCompany)),
+      ...(activeCompany ? WORKSPACE_ITEMS : []),
+      ...SYSTEM_ITEMS,
+    ];
     const navEntries: PaletteEntry[] = navItems.map((item) => ({
       key: `nav:${item.to}`,
       label: item.label,

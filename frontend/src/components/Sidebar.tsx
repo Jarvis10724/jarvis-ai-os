@@ -30,13 +30,14 @@ import ProjectSwitcher from "@/components/ProjectSwitcher";
 import JarvisCore from "@/components/JarvisCore";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
+import { isModuleVisibleForCompany, type ModuleCategory } from "@/lib/companyModules";
 
 // Exported so CommandPalette can flatten these into "jump to any page"
 // entries without a second, separately-maintained route registry.
 export const GLOBAL_ITEMS = [
   { to: "/", label: "Overview", icon: Home, end: true },
   { to: "/daily-brief", label: "Daily Brief", icon: Sunrise },
-  { to: "/investments", label: "Investment Dashboard", icon: LineChart },
+  { to: "/investments", label: "Investment Dashboard", icon: LineChart, category: "investing" as const },
   { to: "/ideas", label: "Idea Incubator", icon: Lightbulb },
   { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/memory", label: "Memory", icon: BrainCircuit },
@@ -63,7 +64,13 @@ export const SYSTEM_ITEMS = [
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
-export type NavEntry = { to: string; label: string; icon: typeof Home; end?: boolean };
+export type NavEntry = {
+  to: string;
+  label: string;
+  icon: typeof Home;
+  end?: boolean;
+  category?: ModuleCategory;
+};
 
 function NavSection({
   label,
@@ -124,10 +131,14 @@ function NavSection({
 
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { activeCompany } = useCompany();
+  // Context-aware: only show modules relevant to the active workspace.
+  const globalItems = GLOBAL_ITEMS.filter((i) =>
+    isModuleVisibleForCompany(i.category, activeCompany)
+  );
 
   return (
     <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4">
-      <NavSection items={GLOBAL_ITEMS} onNavigate={onNavigate} />
+      <NavSection items={globalItems} onNavigate={onNavigate} />
       {activeCompany && (
         <NavSection
           label={`Workspace — ${activeCompany.name}`}

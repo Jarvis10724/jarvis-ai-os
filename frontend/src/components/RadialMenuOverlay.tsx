@@ -9,6 +9,7 @@ import OrbitRing from "@/components/orbital/OrbitRing";
 import { GLOBAL_ITEMS, SYSTEM_ITEMS, WORKSPACE_ITEMS, type NavEntry } from "@/components/Sidebar";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
+import { isModuleVisibleForCompany } from "@/lib/companyModules";
 
 function polar(cx: number, cy: number, radius: number, angleDeg: number) {
   const rad = (angleDeg * Math.PI) / 180;
@@ -71,14 +72,16 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
   const workspaceRadius = Math.max(220, shortSide * 0.42);
 
   const workspaceItems = activeCompany ? WORKSPACE_ITEMS : [];
+  // Context-aware: only surface modules relevant to the active workspace.
+  const globalItems = GLOBAL_ITEMS.filter((i) => isModuleVisibleForCompany(i.category, activeCompany));
 
   const systemPositions = useMemo(
     () => SYSTEM_ITEMS.map((item, i) => ({ item, ...polar(cx, cy, systemRadius, -90 + (360 / SYSTEM_ITEMS.length) * i) })),
     [cx, cy, systemRadius]
   );
   const globalPositions = useMemo(
-    () => GLOBAL_ITEMS.map((item, i) => ({ item, ...polar(cx, cy, globalRadius, -90 + (360 / GLOBAL_ITEMS.length) * i) })),
-    [cx, cy, globalRadius]
+    () => globalItems.map((item, i) => ({ item, ...polar(cx, cy, globalRadius, -90 + (360 / globalItems.length) * i) })),
+    [cx, cy, globalRadius, globalItems]
   );
   const workspacePositions = useMemo(
     () =>
