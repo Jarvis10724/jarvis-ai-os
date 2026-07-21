@@ -49,6 +49,7 @@ export const GLOBAL_ITEMS: NavEntry[] = [
 // e.g. an innovation-hub hides manufacturing/commerce/marketing; a
 // consumer-brands workspace shows them all.
 export const WORKSPACE_ITEMS: NavEntry[] = [
+  { to: "/company/brand-brain", label: "Brand Brain", icon: Boxes, capability: "commerce" },
   { to: "/company/dashboard", label: "Company Dashboard", icon: LayoutDashboard, capability: "operations" },
   { to: "/company/projects", label: "Project Manager", icon: Rocket, capability: "operations" },
   { to: "/company/crm", label: "CRM", icon: Users, capability: "operations" },

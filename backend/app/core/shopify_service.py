@@ -59,6 +59,8 @@ def status(owner_id: str, company_id: str | None) -> dict:
         "bound_workspace_id": settings.SHOPIFY_WORKSPACE_ID if configured else None,
         "active_workspace_is_bound": bound_to_active,
         "read_only": True,
+        # Explicit write kill-switch — writes stay disabled until turned on.
+        "write_enabled": settings.SHOPIFY_WRITE_ENABLED,
     }
 
 
@@ -173,6 +175,63 @@ query Metaobjects($type: String!, $first: Int!) {
   }
 }
 """
+
+
+# Full product/collection queries for the Brand Brain import — richer than the
+# lightweight list queries above (images, tags, description, variants, pricing,
+# SEO) and cursor-paginated so a sync can walk the ENTIRE catalog, not just the
+# first page. Still queries only — no mutation, read-only by construction.
+_PRODUCTS_FULL_Q = """
+query ProductsFull($first: Int!, $after: String) {
+  products(first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    edges { node {
+      id title handle status description productType vendor tags totalInventory onlineStoreUrl
+      priceRangeV2 {
+        minVariantPrice { amount currencyCode }
+        maxVariantPrice { amount currencyCode }
+      }
+      featuredImage { url altText }
+      images(first: 10) { edges { node { url altText } } }
+      seo { title description }
+      variants(first: 50) { edges { node {
+        id title sku price compareAtPrice inventoryQuantity availableForSale
+        selectedOptions { name value }
+        image { url altText }
+      } } }
+    } }
+  }
+}
+"""
+
+_COLLECTIONS_FULL_Q = """
+query CollectionsFull($first: Int!, $after: String) {
+  collections(first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    edges { node {
+      id title handle description
+      productsCount { count }
+      image { url altText }
+    } }
+  }
+}
+"""
+
+
+async def list_products_page(db, *, owner_id, company_id, first=50, after=None):
+    """One page of full product data (with pageInfo) for the Brand Brain sync."""
+    return await _run(
+        db, owner_id=owner_id, company_id=company_id, action_type="list_products",
+        query=_PRODUCTS_FULL_Q, variables={"first": first, "after": after},
+    )
+
+
+async def list_collections_page(db, *, owner_id, company_id, first=50, after=None):
+    """One page of full collection data (with pageInfo) for the Brand Brain sync."""
+    return await _run(
+        db, owner_id=owner_id, company_id=company_id, action_type="list_collections",
+        query=_COLLECTIONS_FULL_Q, variables={"first": first, "after": after},
+    )
 
 
 async def list_products(db, *, owner_id, company_id, first=20):

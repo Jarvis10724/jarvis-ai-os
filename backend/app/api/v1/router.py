@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     agents,
+    brand_brain,
     calendar,
     capabilities,
     chat,
@@ -47,3 +48,4 @@ api_router.include_router(calendar.router)
 api_router.include_router(drive.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(shopify.router)
+api_router.include_router(brand_brain.router)

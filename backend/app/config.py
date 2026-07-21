@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     SHOPIFY_ADMIN_API_TOKEN: str | None = None  # legacy shpat_... (optional fallback)
     SHOPIFY_API_VERSION: str = "2025-01"
     SHOPIFY_WORKSPACE_ID: str | None = None  # Primal Penni's company UUID
+    # Global kill-switch for Shopify WRITE operations. Read-only by design today
+    # (the client issues GraphQL queries only), so this stays False until write
+    # capabilities are explicitly built and enabled. Surfaced in the status
+    # payload so the UI can show a "Read-only" badge; any future write path must
+    # refuse unless this is True.
+    SHOPIFY_WRITE_ENABLED: bool = False
 
     # Market data for the Investment Dashboard's watchlist/news — free-tier
     # key from https://finnhub.io. Leave blank to keep the dashboard in its
