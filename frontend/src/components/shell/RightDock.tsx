@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Bot, BrainCircuit, Clock, type LucideIcon } from "lucide-react";
+import { Bell, Bot, BrainCircuit, Clock, LayoutGrid, type LucideIcon } from "lucide-react";
 import clsx from "clsx";
 
 import { useDashboardUI, type DockPanel } from "@/context/DashboardUIContext";
@@ -7,8 +7,10 @@ import NotificationsCenter from "@/components/shell/panels/NotificationsCenter";
 import TimelinePanel from "@/components/shell/panels/TimelinePanel";
 import MemoryPanel from "@/components/shell/panels/MemoryPanel";
 import AgentsPanel from "@/components/shell/panels/AgentsPanel";
+import WorkspacePanel from "@/components/shell/panels/WorkspacePanel";
 
 const DOCK_ITEMS: { key: DockPanel; label: string; icon: LucideIcon }[] = [
+  { key: "workspace", label: "Workspace", icon: LayoutGrid },
   { key: "timeline", label: "Timeline", icon: Clock },
   { key: "memory", label: "AI Memory", icon: BrainCircuit },
   { key: "agents", label: "Active Agents", icon: Bot },
@@ -28,6 +30,8 @@ export default function RightDock() {
 
   function renderPanel(panel: DockPanel) {
     switch (panel) {
+      case "workspace":
+        return <WorkspacePanel onClose={closePanel} />;
       case "timeline":
         return <TimelinePanel onClose={closePanel} />;
       case "memory":

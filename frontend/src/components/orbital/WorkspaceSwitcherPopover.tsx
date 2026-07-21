@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
+import { resolveWorkspace } from "@/lib/workspace";
 import { usePrompt } from "@/context/PromptContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/api/client";
@@ -90,19 +91,32 @@ export default function WorkspaceSwitcherPopover({
             <div className="max-h-48 overflow-y-auto py-1">
               {loading && <div className="skeleton m-2 h-9 rounded-lg" />}
               {!loading &&
-                companies.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => {
-                      setActiveCompanyId(c.id);
-                      onClose();
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-jarvis-muted transition-colors duration-150 hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
-                  >
-                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                    {c.id === activeCompanyId && <Check className="h-3.5 w-3.5 shrink-0 text-jarvis-cyan" />}
-                  </button>
-                ))}
+                companies.map((c) => {
+                  const ws = resolveWorkspace(c);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setActiveCompanyId(c.id);
+                        onClose();
+                      }}
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-jarvis-muted transition-colors duration-150 hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                    >
+                      {/* Each workspace's own monogram "logo" in its accent. */}
+                      <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg font-display text-[10px] font-bold"
+                        style={{ backgroundColor: ws.theme.accentFaint, color: ws.theme.accent }}
+                      >
+                        {ws.monogram}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-jarvis-text">{c.name}</span>
+                        <span className="block truncate text-[10px] text-jarvis-muted">{ws.role}</span>
+                      </span>
+                      {c.id === activeCompanyId && <Check className="h-3.5 w-3.5 shrink-0 text-jarvis-cyan" />}
+                    </button>
+                  );
+                })}
               {!loading && companies.length === 0 && (
                 <p className="px-2.5 py-3 text-xs text-jarvis-muted">No workspaces yet.</p>
               )}

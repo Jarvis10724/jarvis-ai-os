@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, Building2, LogOut, Menu, Moon, Search, Sun, Zap } from "lucide-react";
+import { Bell, LogOut, Menu, Moon, Search, Sun, Zap } from "lucide-react";
 import clsx from "clsx";
 
 import { api } from "@/api/client";
 import { useAuth } from "@/context/AuthContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useWorkspace } from "@/hooks/useWorkspace";
 
 interface TopNavProps {
   onToggleNotifications: () => void;
@@ -24,6 +25,7 @@ export default function TopNav({
   const { user, logout } = useAuth();
   const { dark, toggleDark } = useTheme();
   const { activeCompany, activeCompanyId } = useCompany();
+  const workspace = useWorkspace();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
 
@@ -78,10 +80,10 @@ export default function TopNav({
           style={{ borderColor: "var(--ws-accent-soft)", backgroundColor: "var(--ws-accent-faint)" }}
         >
           <span
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg font-display text-[11px] font-bold"
             style={{ backgroundColor: "var(--ws-accent-faint)", color: "var(--ws-accent)" }}
           >
-            <Building2 className="h-3.5 w-3.5" />
+            {workspace.monogram}
           </span>
           <span className="min-w-0">
             <span className="block truncate text-xs font-semibold leading-tight text-jarvis-text">

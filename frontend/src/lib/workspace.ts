@@ -1,3 +1,17 @@
+import {
+  Bot,
+  BrainCircuit,
+  CalendarClock,
+  FolderOpen,
+  ListChecks,
+  Mail,
+  MessageSquare,
+  Palette,
+  Plug,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
+
 import type { Company } from "@/types";
 import { themeForCompany, type WorkspaceTheme } from "@/lib/workspaceTheme";
 
@@ -199,4 +213,110 @@ export function resolveWorkspace(company: Company | null | undefined): ResolvedW
     capabilities: capabilitiesFor(kind),
     integrationFocus: INTEGRATION_FOCUS[kind],
   };
+}
+
+/**
+ * A domain of a workspace's operating environment. Every workspace is a
+ * complete AI OS — its own memory, files, mail/calendar, integrations, brand,
+ * tasks/approvals/automations, agents, and conversations — not just a themed
+ * dashboard. This registry is the single, scalable description of those
+ * domains: it drives the Workspace universe surface today, and new domains or
+ * integrations plug in here as data (a route + capability), never a redesign.
+ * Routes carry the active company id so every domain stays workspace-scoped.
+ */
+export interface WorkspaceDomain {
+  key: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  capability: WorkspaceCapability;
+  route: (companyId: string | null) => string;
+}
+
+export const WORKSPACE_DOMAINS: WorkspaceDomain[] = [
+  {
+    key: "memory",
+    label: "AI Memory",
+    description: "Knowledge base & recall",
+    icon: BrainCircuit,
+    capability: "core",
+    route: (id) => (id ? `/memory?company=${id}` : "/memory"),
+  },
+  {
+    key: "files",
+    label: "Files",
+    description: "Documents & assets",
+    icon: FolderOpen,
+    capability: "core",
+    route: () => "/company?tab=documents",
+  },
+  {
+    key: "mail",
+    label: "Gmail",
+    description: "Email connection",
+    icon: Mail,
+    capability: "core",
+    route: (id) => (id ? `/integrations?company=${id}` : "/integrations"),
+  },
+  {
+    key: "calendar",
+    label: "Calendar",
+    description: "Schedule & events",
+    icon: CalendarClock,
+    capability: "core",
+    route: (id) => (id ? `/integrations?company=${id}` : "/integrations"),
+  },
+  {
+    key: "integrations",
+    label: "Integrations",
+    description: "Shopify, Drive, QuickBooks & more",
+    icon: Plug,
+    capability: "core",
+    route: (id) => (id ? `/integrations?company=${id}` : "/integrations"),
+  },
+  {
+    key: "brand",
+    label: "Brand & Products",
+    description: "Logos, colors, products",
+    icon: Palette,
+    capability: "core",
+    route: () => "/company",
+  },
+  {
+    key: "tasks",
+    label: "Tasks",
+    description: "Projects & work",
+    icon: ListChecks,
+    capability: "core",
+    route: () => "/company/projects",
+  },
+  {
+    key: "approvals",
+    label: "Approvals",
+    description: "Decisions awaiting you",
+    icon: ShieldCheck,
+    capability: "core",
+    route: () => "/approvals",
+  },
+  {
+    key: "agents",
+    label: "AI Agents",
+    description: "Specialized for this workspace",
+    icon: Bot,
+    capability: "core",
+    route: () => "/automation",
+  },
+  {
+    key: "conversations",
+    label: "Conversations",
+    description: "Chat history",
+    icon: MessageSquare,
+    capability: "core",
+    route: () => "/chat",
+  },
+];
+
+/** The domains a workspace of `kind` surfaces (gated by its capability set). */
+export function domainsForKind(kind: WorkspaceKind): WorkspaceDomain[] {
+  return WORKSPACE_DOMAINS.filter((d) => moduleSurfacesForKind(d.capability, kind));
 }

@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 // The panels the persistent right dock can show. One at a time.
-export type DockPanel = "notifications" | "timeline" | "memory" | "agents";
+export type DockPanel = "workspace" | "notifications" | "timeline" | "memory" | "agents";
 
 // Small context so deeply nested dashboard widgets (e.g. the CEO
 // dashboard's notifications snapshot card) and the shell chrome (left rail,

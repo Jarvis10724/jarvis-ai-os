@@ -19,16 +19,8 @@ import WorkspaceSwitcherPopover from "@/components/orbital/WorkspaceSwitcherPopo
 import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
 import { useCoreState } from "@/hooks/useCoreState";
+import { useWorkspace } from "@/hooks/useWorkspace";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
 
 // Primary destinations that stay one click away in the persistent rail. The
 // full constellation (company modules, daily brief, ideas, investments,
@@ -63,6 +55,7 @@ export default function RadialNav() {
   const location = useLocation();
   const { activeCompany } = useCompany();
   const { activeProjectId } = useProject();
+  const workspace = useWorkspace();
   const coreState = useCoreState();
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -97,7 +90,7 @@ export default function RadialNav() {
           className="press-scale flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-jarvis-border bg-jarvis-panel2/60 text-xs font-bold transition"
           style={{ color: "var(--ws-accent)", borderColor: activeCompany ? "var(--ws-accent-soft)" : undefined }}
         >
-          {activeCompany ? initials(activeCompany.name) : "—"}
+          {activeCompany ? workspace.monogram : "—"}
         </button>
 
         <div className="h-px w-8 shrink-0 bg-jarvis-border/60" />
