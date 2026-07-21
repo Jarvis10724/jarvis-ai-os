@@ -1,16 +1,19 @@
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 
 import CommandPalette from "@/components/CommandPalette";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import MobileNav from "@/components/MobileNav";
 import QuickActions from "@/components/QuickActions";
 import RadialNav from "@/components/RadialNav";
 import RightDock from "@/components/shell/RightDock";
+import WorkspaceThemeVars from "@/components/shell/WorkspaceThemeVars";
 import TopNav from "@/components/TopNav";
 import { DashboardUIProvider, type DockPanel } from "@/context/DashboardUIContext";
 import { useAutoDailyBriefing } from "@/hooks/useAutoDailyBriefing";
 import { useGlobalHotkey } from "@/hooks/useGlobalHotkey";
+import { usePauseOffscreenAnimations } from "@/hooks/usePauseOffscreenAnimations";
 
 // The persistent shell: mounted once by App.tsx's layout route, not
 // per-page. Sidebar/TopNav/MobileNav/panels/the ambient background all live
@@ -27,6 +30,7 @@ export default function DashboardShell() {
   // once per navigation — still safe even if that changes later, since the
   // hook has its own module-level cooldown guard (see useAutoDailyBriefing.ts).
   useAutoDailyBriefing();
+  usePauseOffscreenAnimations();
 
   // Cmd/Ctrl+K anywhere in the app — only clean to register once now that
   // the shell is persistent instead of remounting per page.
@@ -48,16 +52,21 @@ export default function DashboardShell() {
       }}
     >
       <div className="flex h-screen w-screen overflow-hidden bg-jarvis-bg bg-grid-pattern bg-grid">
+        {/* Applies the active workspace's accent theme (CSS vars) app-wide. */}
+        <WorkspaceThemeVars />
         {/* Decorative ambient glow layer — fixed behind every screen so the
             whole app shares one quietly "alive" backdrop, not just Chat. */}
         <div className="ambient-orbs" aria-hidden="true">
+          {/* The two lead orbs carry the active workspace's accent (cross-fading
+              on switch) so the whole backdrop "changes universe"; the third
+              stays neutral blue for depth variety. */}
           <span
-            className="h-[26rem] w-[26rem] bg-jarvis-cyan"
-            style={{ top: "-8rem", left: "-6rem", animationDelay: "0s" }}
+            className="h-[26rem] w-[26rem]"
+            style={{ top: "-8rem", left: "-6rem", animationDelay: "0s", backgroundColor: "var(--ws-accent)" }}
           />
           <span
-            className="h-[22rem] w-[22rem] bg-jarvis-violet"
-            style={{ top: "40%", right: "-8rem", animationDelay: "3s" }}
+            className="h-[22rem] w-[22rem]"
+            style={{ top: "40%", right: "-8rem", animationDelay: "3s", backgroundColor: "var(--ws-glow)" }}
           />
           <span
             className="h-[20rem] w-[20rem] bg-jarvis-blue"
@@ -83,7 +92,15 @@ export default function DashboardShell() {
               transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
               className="flex min-h-0 flex-1 flex-col"
             >
-              <Outlet />
+              {/* Page chunks are code-split (React.lazy); the shell stays
+                  mounted while a route's chunk loads. The ErrorBoundary keeps a
+                  broken page from blanking the whole OS — and, keyed by route,
+                  resets itself when the user navigates away. */}
+              <ErrorBoundary key={location.pathname}>
+                <Suspense fallback={<PageLoader />}>
+                  <Outlet />
+                </Suspense>
+              </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         </div>
@@ -94,5 +111,14 @@ export default function DashboardShell() {
         <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
       </div>
     </DashboardUIProvider>
+  );
+}
+
+// Shown briefly while a lazily-loaded page chunk downloads.
+function PageLoader() {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-jarvis-cyan/30 border-t-jarvis-cyan" />
+    </div>
   );
 }

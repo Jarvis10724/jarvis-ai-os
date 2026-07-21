@@ -16,19 +16,11 @@ import clsx from "clsx";
 import JarvisCore from "@/components/JarvisCore";
 import RadialMenuOverlay from "@/components/RadialMenuOverlay";
 import WorkspaceSwitcherPopover from "@/components/orbital/WorkspaceSwitcherPopover";
-import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
+import { useCoreState } from "@/hooks/useCoreState";
+import { useWorkspace } from "@/hooks/useWorkspace";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
 
 // Primary destinations that stay one click away in the persistent rail. The
 // full constellation (company modules, daily brief, ideas, investments,
@@ -63,7 +55,8 @@ export default function RadialNav() {
   const location = useLocation();
   const { activeCompany } = useCompany();
   const { activeProjectId } = useProject();
-  const { status } = useAssistantStatus();
+  const workspace = useWorkspace();
+  const coreState = useCoreState();
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const workspaceBtnRef = useRef<HTMLButtonElement>(null);
@@ -86,7 +79,7 @@ export default function RadialNav() {
           title="Home — Jarvis Core"
           className="press-scale shrink-0 rounded-full transition hover:shadow-glow-sm"
         >
-          <JarvisCore state={status} size={40} />
+          <JarvisCore state={coreState} size={40} />
         </button>
 
         {/* Workspace + project switcher */}
@@ -94,9 +87,10 @@ export default function RadialNav() {
           ref={workspaceBtnRef}
           onClick={openSwitcher}
           title={activeCompany ? activeCompany.name : "No workspace"}
-          className="press-scale flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-jarvis-border bg-jarvis-panel2/60 text-xs font-bold text-jarvis-cyan transition hover:border-jarvis-cyan/50"
+          className="press-scale flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-jarvis-border bg-jarvis-panel2/60 text-xs font-bold transition"
+          style={{ color: "var(--ws-accent)", borderColor: activeCompany ? "var(--ws-accent-soft)" : undefined }}
         >
-          {activeCompany ? initials(activeCompany.name) : "—"}
+          {activeCompany ? workspace.monogram : "—"}
         </button>
 
         <div className="h-px w-8 shrink-0 bg-jarvis-border/60" />

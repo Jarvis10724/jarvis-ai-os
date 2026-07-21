@@ -216,6 +216,7 @@ def main() -> None:
                 tagline="Clean, small-batch consumer brands — DEMO workspace",
                 industry="Consumer Goods",
                 website="https://primalpennicollective.com",
+                company_type="consumer-brands",
                 divisions_json=json.dumps([DBA]),
             )
             db.add(company)
@@ -225,6 +226,11 @@ def main() -> None:
             divs = json.loads(company.divisions_json or "[]")
             if DBA not in divs:
                 company.divisions_json = json.dumps([DBA, *divs])
+        # Structured workspace metadata — SNP is an operating consumer-brands
+        # workspace (drives its module set, branding, and AI behavior by data,
+        # not by name). Set idempotently so an existing demo row is upgraded.
+        if company.company_type != "consumer-brands":
+            company.company_type = "consumer-brands"
 
         # 3) Realistic Primal Penni products.
         products = [

@@ -19,6 +19,21 @@ class Company(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tagline: Mapped[str | None] = mapped_column(String(500), nullable=True)
     industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
     website: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Structured workspace metadata (drives modules, AI behavior, branding,
+    # and future automations — so Jarvis understands each workspace by data,
+    # not just its name). `company_type` is the workspace kind
+    # (innovation-hub | consumer-brands | investment | real-estate | venture |
+    # business); the frontend's classifyWorkspace prefers it when set and falls
+    # back to a name/industry heuristic otherwise. `parent_company_id` models
+    # the parent → operating-company relationship (e.g. an innovation hub that
+    # owns a consumer brand); it is same-account only, enforced by the API.
+    company_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    parent_company_id: Mapped[str | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
+    )
+    parent: Mapped["Company | None"] = relationship(
+        "Company", remote_side="Company.id", foreign_keys=[parent_company_id]
+    )
     # Internal categories for organizing work within ONE company (e.g. a
     # holding company's side hustles / consulting / investing / taxes /
     # future-ventures areas). Stored as a JSON list of plain strings —

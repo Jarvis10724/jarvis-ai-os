@@ -1,11 +1,13 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Bot, BrainCircuit, Clock, Globe, X, type LucideIcon } from "lucide-react";
+import { Bell, Bot, BrainCircuit, ChevronRight, Clock, Globe, X, type LucideIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import CompanySwitcher from "@/components/CompanySwitcher";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
 import { SidebarBrand, SidebarNav, SystemLoadCard } from "@/components/Sidebar";
+import { useCompany } from "@/context/CompanyContext";
 import { useDashboardUI, type DockPanel } from "@/context/DashboardUIContext";
+import { useWorkspace } from "@/hooks/useWorkspace";
 
 const PANELS: { key: DockPanel; label: string; icon: LucideIcon }[] = [
   { key: "timeline", label: "Timeline", icon: Clock },
@@ -16,6 +18,8 @@ const PANELS: { key: DockPanel; label: string; icon: LucideIcon }[] = [
 
 export default function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { openPanel } = useDashboardUI();
+  const { activeCompany } = useCompany();
+  const workspace = useWorkspace();
   const navigate = useNavigate();
   return (
     <AnimatePresence>
@@ -46,6 +50,34 @@ export default function MobileNav({ open, onClose }: { open: boolean; onClose: (
             </div>
             <CompanySwitcher />
             <ProjectSwitcher />
+            {/* Workspace universe — the workspace as a complete AI operating
+                environment (identity + every domain with live status). */}
+            {activeCompany && (
+              <button
+                onClick={() => {
+                  openPanel("workspace");
+                  onClose();
+                }}
+                className="press-scale mx-3 mt-3 flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition"
+                style={{ borderColor: "var(--ws-accent-soft)", backgroundColor: "var(--ws-accent-faint)" }}
+              >
+                <span
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-display text-sm font-bold"
+                  style={{ backgroundColor: "var(--ws-accent-faint)", color: "var(--ws-accent)" }}
+                >
+                  {workspace.monogram}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-jarvis-text">
+                    {activeCompany.name}
+                  </span>
+                  <span className="block truncate text-[11px]" style={{ color: "var(--ws-accent)" }}>
+                    {workspace.role} · Open universe
+                  </span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-jarvis-muted" />
+              </button>
+            )}
             {/* Primary demo entry — opens the saved Website Builder session. */}
             <button
               onClick={() => {

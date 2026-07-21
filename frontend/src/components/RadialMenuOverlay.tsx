@@ -7,9 +7,10 @@ import ConnectionLines from "@/components/orbital/ConnectionLines";
 import OrbitalNode from "@/components/orbital/OrbitalNode";
 import OrbitRing from "@/components/orbital/OrbitRing";
 import { GLOBAL_ITEMS, SYSTEM_ITEMS, WORKSPACE_ITEMS, type NavEntry } from "@/components/Sidebar";
-import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
+import { useCoreState } from "@/hooks/useCoreState";
 import { isModuleVisibleForCompany } from "@/lib/companyModules";
+import { classifyWorkspace, moduleSurfacesForKind } from "@/lib/workspace";
 
 function polar(cx: number, cy: number, radius: number, angleDeg: number) {
   const rad = (angleDeg * Math.PI) / 180;
@@ -33,7 +34,7 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
   const navigate = useNavigate();
   const location = useLocation();
   const { activeCompany } = useCompany();
-  const { status } = useAssistantStatus();
+  const coreState = useCoreState();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -71,9 +72,15 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
   const globalRadius = Math.max(150, shortSide * 0.28);
   const workspaceRadius = Math.max(220, shortSide * 0.42);
 
-  const workspaceItems = activeCompany ? WORKSPACE_ITEMS : [];
-  // Context-aware: only surface modules relevant to the active workspace.
-  const globalItems = GLOBAL_ITEMS.filter((i) => isModuleVisibleForCompany(i.category, activeCompany));
+  // Context-aware: only surface modules relevant to the active workspace —
+  // gated by investing category and by the workspace's capability set (kind).
+  const kind = classifyWorkspace(activeCompany);
+  const workspaceItems = activeCompany
+    ? WORKSPACE_ITEMS.filter((i) => moduleSurfacesForKind(i.capability, kind))
+    : [];
+  const globalItems = GLOBAL_ITEMS.filter(
+    (i) => isModuleVisibleForCompany(i.category, activeCompany) && moduleSurfacesForKind(i.capability, kind)
+  );
 
   const systemPositions = useMemo(
     () => SYSTEM_ITEMS.map((item, i) => ({ item, ...polar(cx, cy, systemRadius, -90 + (360 / SYSTEM_ITEMS.length) * i) })),
@@ -135,7 +142,7 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
                     style={{ left: cx, top: cy }}
                     title="Close (Esc)"
                   >
-                    <JarvisCore state={status} size={36} />
+                    <JarvisCore state={coreState} size={36} />
                   </button>
 
                   {systemPositions.map(({ item, x, y }, i) => (

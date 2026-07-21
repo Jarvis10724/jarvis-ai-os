@@ -30,6 +30,10 @@ const VOICE_STATE_LABEL: Record<JarvisCoreState, string> = {
   idle: "Online",
   listening: "Listening",
   thinking: "Thinking",
+  researching: "Researching",
+  generating: "Generating",
+  waiting: "Awaiting approval",
+  completed: "Done",
   speaking: "Speaking",
 };
 
@@ -37,6 +41,10 @@ const VOICE_STATE_DOT: Record<JarvisCoreState, string> = {
   idle: "bg-jarvis-emerald",
   listening: "bg-jarvis-rose",
   thinking: "bg-jarvis-violet",
+  researching: "bg-jarvis-blue",
+  generating: "bg-jarvis-emerald",
+  waiting: "bg-jarvis-amber",
+  completed: "bg-jarvis-emerald",
   speaking: "bg-jarvis-cyan",
 };
 

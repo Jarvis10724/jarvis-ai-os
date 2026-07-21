@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { MotionConfig } from "framer-motion";
 
 import App from "@/App";
 import { AssistantStatusProvider } from "@/context/AssistantStatusContext";
@@ -23,7 +24,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               <CompanyProvider>
                 <ProjectProvider>
                   <AssistantStatusProvider>
-                    <App />
+                    {/* Every framer-motion animation honors the OS
+                        "reduce motion" setting automatically. */}
+                    <MotionConfig reducedMotion="user">
+                      <App />
+                    </MotionConfig>
                   </AssistantStatusProvider>
                 </ProjectProvider>
               </CompanyProvider>
