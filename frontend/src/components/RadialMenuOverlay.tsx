@@ -7,8 +7,8 @@ import ConnectionLines from "@/components/orbital/ConnectionLines";
 import OrbitalNode from "@/components/orbital/OrbitalNode";
 import OrbitRing from "@/components/orbital/OrbitRing";
 import { GLOBAL_ITEMS, SYSTEM_ITEMS, WORKSPACE_ITEMS, type NavEntry } from "@/components/Sidebar";
-import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
+import { useCoreState } from "@/hooks/useCoreState";
 import { isModuleVisibleForCompany } from "@/lib/companyModules";
 
 function polar(cx: number, cy: number, radius: number, angleDeg: number) {
@@ -33,7 +33,7 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
   const navigate = useNavigate();
   const location = useLocation();
   const { activeCompany } = useCompany();
-  const { status } = useAssistantStatus();
+  const coreState = useCoreState();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -135,7 +135,7 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
                     style={{ left: cx, top: cy }}
                     title="Close (Esc)"
                   >
-                    <JarvisCore state={status} size={36} />
+                    <JarvisCore state={coreState} size={36} />
                   </button>
 
                   {systemPositions.map(({ item, x, y }, i) => (

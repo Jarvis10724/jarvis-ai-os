@@ -7,6 +7,7 @@ import MobileNav from "@/components/MobileNav";
 import QuickActions from "@/components/QuickActions";
 import RadialNav from "@/components/RadialNav";
 import RightDock from "@/components/shell/RightDock";
+import WorkspaceThemeVars from "@/components/shell/WorkspaceThemeVars";
 import TopNav from "@/components/TopNav";
 import { DashboardUIProvider, type DockPanel } from "@/context/DashboardUIContext";
 import { useAutoDailyBriefing } from "@/hooks/useAutoDailyBriefing";
@@ -48,6 +49,8 @@ export default function DashboardShell() {
       }}
     >
       <div className="flex h-screen w-screen overflow-hidden bg-jarvis-bg bg-grid-pattern bg-grid">
+        {/* Applies the active workspace's accent theme (CSS vars) app-wide. */}
+        <WorkspaceThemeVars />
         {/* Decorative ambient glow layer — fixed behind every screen so the
             whole app shares one quietly "alive" backdrop, not just Chat. */}
         <div className="ambient-orbs" aria-hidden="true">

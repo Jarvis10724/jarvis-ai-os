@@ -16,9 +16,9 @@ import clsx from "clsx";
 import JarvisCore from "@/components/JarvisCore";
 import RadialMenuOverlay from "@/components/RadialMenuOverlay";
 import WorkspaceSwitcherPopover from "@/components/orbital/WorkspaceSwitcherPopover";
-import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
+import { useCoreState } from "@/hooks/useCoreState";
 import { QUICK_ACTIONS } from "@/lib/quickActions";
 
 function initials(name: string): string {
@@ -63,7 +63,7 @@ export default function RadialNav() {
   const location = useLocation();
   const { activeCompany } = useCompany();
   const { activeProjectId } = useProject();
-  const { status } = useAssistantStatus();
+  const coreState = useCoreState();
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const workspaceBtnRef = useRef<HTMLButtonElement>(null);
@@ -86,7 +86,7 @@ export default function RadialNav() {
           title="Home — Jarvis Core"
           className="press-scale shrink-0 rounded-full transition hover:shadow-glow-sm"
         >
-          <JarvisCore state={status} size={40} />
+          <JarvisCore state={coreState} size={40} />
         </button>
 
         {/* Workspace + project switcher */}
