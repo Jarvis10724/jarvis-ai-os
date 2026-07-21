@@ -38,7 +38,7 @@ export default function TopNav({
     .toUpperCase();
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-3 border-b border-jarvis-border/60 bg-jarvis-panel/40 px-4 backdrop-blur-2xl sm:gap-4 sm:px-6">
+    <header className="pt-safe flex min-h-16 shrink-0 items-center gap-3 border-b border-jarvis-border/60 bg-jarvis-panel/40 px-4 backdrop-blur-2xl sm:gap-4 sm:px-6">
       <button
         onClick={onOpenMobileNav}
         className="press-scale rounded-lg p-2 text-jarvis-muted transition hover:bg-jarvis-panel2/60 hover:text-jarvis-text md:hidden"

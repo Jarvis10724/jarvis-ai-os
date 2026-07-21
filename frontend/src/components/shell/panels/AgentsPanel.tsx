@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { api, ApiError } from "@/api/client";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
-import PanelFrame, { PanelEmpty, PanelLoading } from "@/components/shell/panels/PanelFrame";
+import PanelFrame, { PanelEmpty, PanelError, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { Agent, AgentRun, AgentRunStatus } from "@/types";
 
 const STATUS_STYLES: Record<AgentRunStatus, string> = {
@@ -27,12 +27,14 @@ export default function AgentsPanel({ onClose }: { onClose: () => void }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   const [launchKey, setLaunchKey] = useState<string>("");
   const [objective, setObjective] = useState("");
   const [launching, setLaunching] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setFailed(false);
     try {
       const [roster, runList] = await Promise.all([
         api.listAgents(),
@@ -43,6 +45,7 @@ export default function AgentsPanel({ onClose }: { onClose: () => void }) {
       setLaunchKey((k) => k || roster[0]?.key || "");
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -90,6 +93,10 @@ export default function AgentsPanel({ onClose }: { onClose: () => void }) {
       refreshing={loading}
       subtitle={activeCompany?.name ?? "No active company"}
     >
+      {failed && agents.length === 0 ? (
+        <PanelError onRetry={load} />
+      ) : (
+      <>
       {/* Launch */}
       <div className="mb-4 rounded-xl border border-jarvis-border/60 bg-jarvis-panel2/30 p-3">
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-jarvis-muted">
@@ -150,6 +157,8 @@ export default function AgentsPanel({ onClose }: { onClose: () => void }) {
             </li>
           ))}
         </ul>
+      )}
+      </>
       )}
     </PanelFrame>
   );

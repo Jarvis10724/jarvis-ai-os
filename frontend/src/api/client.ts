@@ -325,12 +325,16 @@ export const api = {
   // recently (the in-app "Generate now" button, or a scheduled task that
   // can also do a live web search for news) already ran. getLatest()
   // resolves to null if nothing has ever been generated yet.
-  getLatestDailyBriefing: () =>
-    apiRequest<{ content: string; generated_at: string | null } | null>("/dashboard/daily-briefing/latest"),
-  saveDailyBriefing: (content: string) =>
+  getLatestDailyBriefing: (companyId?: string | null) => {
+    const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : "";
+    return apiRequest<{ content: string; generated_at: string | null } | null>(
+      `/dashboard/daily-briefing/latest${qs}`
+    );
+  },
+  saveDailyBriefing: (content: string, companyId?: string | null) =>
     apiRequest<{ content: string; generated_at: string | null }>("/dashboard/daily-briefing", {
       method: "POST",
-      body: { content },
+      body: { content, company_id: companyId ?? null },
     }),
 
   // Jarvis is a multi-company OS — companies is a collection, not a
@@ -591,6 +595,27 @@ export interface WorkspaceStreamHandlers {
  * attaches the same Bearer token. Returns an abort function the caller can
  * use to cancel an in-flight stream (e.g. on unmount).
  */
+// The raw SSE fetches below bypass apiRequest's 401→refresh path, so a stream
+// opened after the 60-min access token expired would fail. This POSTs the
+// stream request and, on a 401, transparently refreshes the token once and
+// retries — keeping long demo sessions (e.g. a website build an hour in) stable.
+async function openStream(url: string, body: unknown, signal: AbortSignal): Promise<Response> {
+  const attempt = (tok: string | null) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+      body: JSON.stringify(body),
+      signal,
+    });
+  let resp = await attempt(getToken());
+  if (resp.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) resp = await attempt(getToken());
+    else clearSession();
+  }
+  return resp;
+}
+
 export function streamWorkspaceMessage(
   sessionId: string,
   content: string,
@@ -600,16 +625,11 @@ export function streamWorkspaceMessage(
   const controller = new AbortController();
   (async () => {
     try {
-      const token = getToken();
-      const resp = await fetch(`${API_BASE}/workspaces/${sessionId}/message`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ content, stage: stage ?? null }),
-        signal: controller.signal,
-      });
+      const resp = await openStream(
+        `${API_BASE}/workspaces/${sessionId}/message`,
+        { content, stage: stage ?? null },
+        controller.signal
+      );
       if (!resp.ok || !resp.body) {
         handlers.onError(`Request failed (${resp.status}).`);
         return;
@@ -676,16 +696,11 @@ export function streamWebsiteBuild(
   const controller = new AbortController();
   (async () => {
     try {
-      const token = getToken();
-      const resp = await fetch(`${API_BASE}/workspaces/${sessionId}/website/build`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ approved: opts.approved, brief: opts.brief ?? null }),
-        signal: controller.signal,
-      });
+      const resp = await openStream(
+        `${API_BASE}/workspaces/${sessionId}/website/build`,
+        { approved: opts.approved, brief: opts.brief ?? null },
+        controller.signal
+      );
       if (!resp.ok || !resp.body) {
         handlers.onError(`Build request failed (${resp.status}).`);
         return;

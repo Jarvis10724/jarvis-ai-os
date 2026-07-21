@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { api, ApiError } from "@/api/client";
 import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
-import PanelFrame, { PanelEmpty, PanelLoading } from "@/components/shell/panels/PanelFrame";
+import PanelFrame, { PanelEmpty, PanelError, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { MemoryEntry } from "@/types";
 
 // AI Memory for the active workspace — defaults to the active PROJECT's memory
@@ -20,9 +20,11 @@ export default function MemoryPanel({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setFailed(false);
     try {
       const useProjectScope = scope === "project" && activeProjectId;
       setEntries(
@@ -35,7 +37,7 @@ export default function MemoryPanel({ onClose }: { onClose: () => void }) {
       );
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
-      setEntries([]);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -93,6 +95,8 @@ export default function MemoryPanel({ onClose }: { onClose: () => void }) {
 
       {loading ? (
         <PanelLoading />
+      ) : failed ? (
+        <PanelError onRetry={load} />
       ) : entries.length === 0 ? (
         <PanelEmpty label="No memory yet." />
       ) : (

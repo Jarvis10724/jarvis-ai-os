@@ -167,6 +167,10 @@ async def executive_summary(payload: SummaryDigestIn, current_user: CurrentUser)
 
 class DailyBriefingIn(BaseModel):
     content: str
+    #: The company this briefing belongs to. Briefings are per-company so
+    #: switching workspaces shows that business's own brief (null = the
+    #: account-wide/personal brief when no company is active).
+    company_id: str | None = None
 
 
 class DailyBriefingOut(BaseModel):
@@ -178,7 +182,8 @@ class DailyBriefingOut(BaseModel):
 async def save_daily_briefing(payload: DailyBriefingIn, current_user: CurrentUser, db: Session = Depends(get_db)) -> DailyBriefingOut:
     entry = MemoryEntry(
         owner_id=current_user.id,
-        scope="organization",
+        company_id=payload.company_id,
+        scope="company" if payload.company_id else "organization",
         kind="fact",
         title=f"Daily Briefing — {datetime.now(timezone.utc).date().isoformat()}",
         content=payload.content,
@@ -191,13 +196,19 @@ async def save_daily_briefing(payload: DailyBriefingIn, current_user: CurrentUse
 
 
 @router.get("/daily-briefing/latest", response_model=DailyBriefingOut | None)
-async def get_latest_daily_briefing(current_user: CurrentUser, db: Session = Depends(get_db)) -> DailyBriefingOut | None:
-    entry = (
-        db.query(MemoryEntry)
-        .filter(MemoryEntry.owner_id == current_user.id, MemoryEntry.source == DAILY_BRIEFING_SOURCE)
-        .order_by(MemoryEntry.created_at.desc())
-        .first()
+async def get_latest_daily_briefing(
+    current_user: CurrentUser, db: Session = Depends(get_db), company_id: str | None = None
+) -> DailyBriefingOut | None:
+    q = db.query(MemoryEntry).filter(
+        MemoryEntry.owner_id == current_user.id, MemoryEntry.source == DAILY_BRIEFING_SOURCE
     )
+    # Scope to the active company so each workspace shows its own brief. A
+    # missing/`none` company means the account-wide (null-company) brief.
+    if company_id and company_id != "none":
+        q = q.filter(MemoryEntry.company_id == company_id)
+    else:
+        q = q.filter(MemoryEntry.company_id.is_(None))
+    entry = q.order_by(MemoryEntry.created_at.desc()).first()
     if not entry:
         return None
     return DailyBriefingOut(content=entry.content, generated_at=entry.created_at.isoformat() if entry.created_at else None)

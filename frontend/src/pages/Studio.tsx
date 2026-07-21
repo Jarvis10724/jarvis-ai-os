@@ -74,6 +74,10 @@ export default function StudioPage() {
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [rightTab, setRightTab] = useState<RightTab>("workspace");
+  // Mobile-only: below xl the sessions rail + workspace panel are collapsed, so
+  // this toggles the center column between the conversation and the workspace
+  // panel (which holds the Website Builder preview + deliverables + tasks).
+  const [mobileView, setMobileView] = useState<"chat" | "panel">("chat");
   const [activeStage, setActiveStage] = useState<string>("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -345,7 +349,7 @@ export default function StudioPage() {
   }, [artifacts]);
 
   return (
-    <main className="flex h-full min-h-0 flex-1 overflow-hidden">
+    <main className="relative flex h-full min-h-0 flex-1 overflow-hidden">
       {/* Sessions rail */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-jarvis-border/60 bg-jarvis-panel/40 md:flex">
         <div className="flex items-center gap-2.5 border-b border-jarvis-border/60 px-4 py-4">
@@ -496,7 +500,19 @@ export default function StudioPage() {
               </button>
             )}
           </div>
-          <SaveBadge state={saveState} savedAt={savedAt} />
+          <div className="flex items-center gap-2">
+            {/* Mobile-only: jump to the workspace panel (preview/deliverables/tasks) */}
+            <button
+              onClick={() => setMobileView("panel")}
+              className="press-scale flex items-center gap-1.5 rounded-lg border border-jarvis-cyan/40 bg-jarvis-cyan/10 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-jarvis-cyan xl:hidden"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              Workspace
+            </button>
+            <span className="hidden sm:flex">
+              <SaveBadge state={saveState} savedAt={savedAt} />
+            </span>
+          </div>
         </div>
 
         {action === "web_builder" && detail && (
@@ -509,7 +525,12 @@ export default function StudioPage() {
             }}
             companyId={activeCompanyId}
             disabled={streaming}
-            onFocusStage={setActiveStage}
+            onFocusStage={(k) => {
+              setActiveStage(k);
+              // On phones, surface the panel automatically when the build lands
+              // on the finished preview so the payoff isn't hidden off-screen.
+              if (k === "preview_html") setMobileView("panel");
+            }}
             onCreateModeSession={async (opts) => {
               const created = await newSession(opts);
               return created?.id ?? null;
@@ -615,7 +636,7 @@ export default function StudioPage() {
             e.preventDefault();
             sendMessage(input, activeStage);
           }}
-          className="border-t border-jarvis-border/60 p-4"
+          className="pb-safe border-t border-jarvis-border/60 p-4"
         >
           {activeStage && stages.length > 0 && (
             <div className="mb-2 flex items-center gap-1.5 text-[10px] text-jarvis-muted">
@@ -652,8 +673,25 @@ export default function StudioPage() {
         </form>
       </section>
 
-      {/* Structured workspace rail */}
-      <aside className="hidden w-96 shrink-0 flex-col border-l border-jarvis-border/60 bg-jarvis-panel/40 xl:flex">
+      {/* Structured workspace rail. On desktop (xl) it's a fixed right column;
+          below xl it becomes a full-screen overlay toggled from the header, so
+          the Website Builder preview + deliverables + tasks stay reachable on
+          iPhone. */}
+      <aside
+        className={clsx(
+          "shrink-0 flex-col border-l border-jarvis-border/60 bg-jarvis-panel/95 backdrop-blur-2xl xl:flex xl:w-96 xl:bg-jarvis-panel/40 xl:backdrop-blur-none",
+          "absolute inset-0 z-20 w-full xl:static xl:z-auto",
+          mobileView === "panel" ? "flex" : "hidden xl:flex"
+        )}
+      >
+        {/* Mobile-only: back to the conversation */}
+        <button
+          onClick={() => setMobileView("chat")}
+          className="flex items-center gap-1.5 border-b border-jarvis-border/60 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-jarvis-cyan xl:hidden"
+        >
+          <CornerDownLeft className="h-3.5 w-3.5 rotate-180" />
+          Back to chat
+        </button>
         <div className="flex border-b border-jarvis-border/60">
           {(["workspace", "deliverables", "tasks"] as const).map((tab) => (
             <button

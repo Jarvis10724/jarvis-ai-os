@@ -61,6 +61,20 @@ export function PanelEmpty({ label }: { label: string }) {
   return <p className="py-10 text-center text-sm text-jarvis-muted">{label}</p>;
 }
 
+export function PanelError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 py-10 text-center">
+      <p className="text-sm text-jarvis-muted">Couldn't load this panel.</p>
+      <button
+        onClick={onRetry}
+        className="press-scale rounded-lg border border-jarvis-cyan/40 bg-jarvis-cyan/10 px-3 py-1.5 text-xs font-semibold text-jarvis-cyan transition hover:bg-jarvis-cyan/20"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
 export function PanelLoading() {
   return (
     <div className="space-y-2">

@@ -48,6 +48,15 @@
     --jarvis-faint: 72 83 107;
   }
 
+  /* iPhone Safari: never allow the page itself to scroll sideways, and let
+     env() safe-area insets resolve (paired with viewport-fit=cover). */
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+
   body {
     @apply bg-jarvis-bg text-jarvis-text antialiased;
     background-image: theme(backgroundImage.aurora);
@@ -88,6 +97,16 @@
   ::selection {
     background: rgba(45, 212, 240, 0.25);
     color: rgb(var(--jarvis-text));
+  }
+}
+
+@layer utilities {
+  /* Safe-area padding for iPhone notch/home-indicator (needs viewport-fit=cover). */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
 }
 

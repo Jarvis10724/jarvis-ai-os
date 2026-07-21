@@ -3,7 +3,7 @@ import { Clock } from "lucide-react";
 
 import { api, ApiError } from "@/api/client";
 import { useProject } from "@/context/ProjectContext";
-import PanelFrame, { PanelEmpty, PanelLoading } from "@/components/shell/panels/PanelFrame";
+import PanelFrame, { PanelEmpty, PanelError, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { ProjectEvent } from "@/types";
 
 function ago(iso: string | null): string {
@@ -21,6 +21,7 @@ export default function TimelinePanel({ onClose }: { onClose: () => void }) {
   const { activeProject, activeProjectId } = useProject();
   const [events, setEvents] = useState<ProjectEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async () => {
     if (!activeProjectId) {
@@ -29,11 +30,12 @@ export default function TimelinePanel({ onClose }: { onClose: () => void }) {
       return;
     }
     setLoading(true);
+    setFailed(false);
     try {
       setEvents(await api.getProjectTimeline(activeProjectId, 100));
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
-      setEvents([]);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -54,6 +56,8 @@ export default function TimelinePanel({ onClose }: { onClose: () => void }) {
     >
       {loading ? (
         <PanelLoading />
+      ) : failed ? (
+        <PanelError onRetry={load} />
       ) : !activeProjectId ? (
         <PanelEmpty label="Select a project to see its timeline." />
       ) : events.length === 0 ? (

@@ -13,26 +13,31 @@ function formatGeneratedAt(iso: string | null): string {
 }
 
 export default function DailyBriefPage() {
-  const { companies } = useCompany();
+  const { companies, activeCompany, activeCompanyId } = useCompany();
   const [briefing, setBriefing] = useState<{ content: string; generated_at: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Re-fetch whenever the active company changes so each workspace shows its
+  // own brief (company-scoped, matching Projects/Memory/Approvals).
   useEffect(() => {
+    setLoading(true);
     api
-      .getLatestDailyBriefing()
+      .getLatestDailyBriefing(activeCompanyId)
       .then(setBriefing)
       .catch(() => setBriefing(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeCompanyId]);
 
   async function generateNow() {
     setGenerating(true);
     setError(null);
     try {
-      const content = await generateDailyBriefingContent(companies);
-      const saved = await api.saveDailyBriefing(content);
+      const content = await generateDailyBriefingContent(
+        activeCompany ? [activeCompany] : companies
+      );
+      const saved = await api.saveDailyBriefing(content, activeCompanyId);
       setBriefing(saved);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to generate the briefing.");
@@ -46,7 +51,7 @@ export default function DailyBriefPage() {
         <ModulePageHeader
           icon={Sunrise}
           title="Daily Brief"
-          description={`Good morning — here's what matters today across ${companies.length || "your"} ${companies.length === 1 ? "company" : "companies"}.`}
+          description={activeCompany ? `Good morning — here's what matters today for ${activeCompany.name}.` : "Good morning — here's what matters today."}
           sampleData={false}
         />
 
