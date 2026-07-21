@@ -82,7 +82,7 @@ interface UseVoiceOrbReturn {
 
 const DETAIL: Partial<Record<VoiceState, string>> = {
   offline: "Voice recognition isn't available in this browser. Use Chrome, Edge, or Safari — or type below.",
-  insecure: "Voice needs a secure context (https or localhost). Type your command below instead.",
+  insecure: "Voice is unavailable over this private HTTP connection. Type commands below. Secure microphone access can be enabled later with HTTPS.",
   "mic-unavailable": "No microphone was detected. Connect one, or type your command below.",
   "permission-denied": "Microphone access was blocked. Allow it in your browser's site settings, then try again.",
   transcribing: "Transcribing…",

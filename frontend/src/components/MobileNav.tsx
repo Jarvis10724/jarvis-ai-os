@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Bot, BrainCircuit, Clock, X, type LucideIcon } from "lucide-react";
+import { Bell, Bot, BrainCircuit, Clock, Globe, X, type LucideIcon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import CompanySwitcher from "@/components/CompanySwitcher";
 import ProjectSwitcher from "@/components/ProjectSwitcher";
@@ -15,6 +16,7 @@ const PANELS: { key: DockPanel; label: string; icon: LucideIcon }[] = [
 
 export default function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { openPanel } = useDashboardUI();
+  const navigate = useNavigate();
   return (
     <AnimatePresence>
       {open && (
@@ -44,6 +46,20 @@ export default function MobileNav({ open, onClose }: { open: boolean; onClose: (
             </div>
             <CompanySwitcher />
             <ProjectSwitcher />
+            {/* Primary demo entry — opens the saved Website Builder session. */}
+            <button
+              onClick={() => {
+                navigate("/studio/web_builder");
+                onClose();
+              }}
+              className="press-scale mx-3 mt-3 flex items-center gap-2.5 rounded-xl border border-jarvis-cyan/40 bg-jarvis-cyan/10 px-3.5 py-3 text-left transition hover:bg-jarvis-cyan/20"
+            >
+              <Globe className="h-5 w-5 shrink-0 text-jarvis-cyan" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-jarvis-text">Resume: Copper Glow Serum</span>
+                <span className="block text-[11px] text-jarvis-muted">Website Builder · Primal Penni</span>
+              </span>
+            </button>
             {/* Right-dock panels (Timeline / Memory / Agents / Notifications) */}
             <div className="mx-3 mt-2 grid grid-cols-4 gap-1.5">
               {PANELS.map(({ key, label, icon: Icon }) => (

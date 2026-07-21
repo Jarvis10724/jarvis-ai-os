@@ -246,9 +246,14 @@ export default function OrbitalHome() {
   const cx = width / 2;
   const cy = Math.max(height / 2 - BOTTOM_RESERVE / 2, height * 0.42);
   const shortSide = Math.min(width, height) || 0;
-  const coreDiameter = Math.min(Math.max(shortSide * 0.46, 260), 620);
-  const innerRadius = Math.max(110, shortSide * 0.24);
-  const outerRadius = Math.max(190, shortSide * 0.42);
+  const narrow = width < 480; // phone portrait
+  // Keep the whole constellation inside the viewport so no orbital node clips
+  // off the right/left edge on a phone. `maxRadius` is the furthest a node
+  // center can sit and still leave room for its ~40px half-width + margin.
+  const maxRadius = Math.max(120, width / 2 - 72);
+  const coreDiameter = Math.min(Math.max(shortSide * 0.46, narrow ? 168 : 260), 620);
+  const innerRadius = Math.min(Math.max(110, shortSide * 0.24), maxRadius * 0.7);
+  const outerRadius = Math.min(Math.max(190, shortSide * 0.42), maxRadius);
 
   const systemSpecs: NodeSpec[] = useMemo(
     () => [
