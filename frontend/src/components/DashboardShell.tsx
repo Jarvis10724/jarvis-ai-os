@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 
 import CommandPalette from "@/components/CommandPalette";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import MobileNav from "@/components/MobileNav";
 import QuickActions from "@/components/QuickActions";
 import RadialNav from "@/components/RadialNav";
@@ -12,6 +13,7 @@ import TopNav from "@/components/TopNav";
 import { DashboardUIProvider, type DockPanel } from "@/context/DashboardUIContext";
 import { useAutoDailyBriefing } from "@/hooks/useAutoDailyBriefing";
 import { useGlobalHotkey } from "@/hooks/useGlobalHotkey";
+import { usePauseOffscreenAnimations } from "@/hooks/usePauseOffscreenAnimations";
 
 // The persistent shell: mounted once by App.tsx's layout route, not
 // per-page. Sidebar/TopNav/MobileNav/panels/the ambient background all live
@@ -28,6 +30,7 @@ export default function DashboardShell() {
   // once per navigation — still safe even if that changes later, since the
   // hook has its own module-level cooldown guard (see useAutoDailyBriefing.ts).
   useAutoDailyBriefing();
+  usePauseOffscreenAnimations();
 
   // Cmd/Ctrl+K anywhere in the app — only clean to register once now that
   // the shell is persistent instead of remounting per page.
@@ -89,7 +92,15 @@ export default function DashboardShell() {
               transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
               className="flex min-h-0 flex-1 flex-col"
             >
-              <Outlet />
+              {/* Page chunks are code-split (React.lazy); the shell stays
+                  mounted while a route's chunk loads. The ErrorBoundary keeps a
+                  broken page from blanking the whole OS — and, keyed by route,
+                  resets itself when the user navigates away. */}
+              <ErrorBoundary key={location.pathname}>
+                <Suspense fallback={<PageLoader />}>
+                  <Outlet />
+                </Suspense>
+              </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         </div>
@@ -100,5 +111,14 @@ export default function DashboardShell() {
         <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
       </div>
     </DashboardUIProvider>
+  );
+}
+
+// Shown briefly while a lazily-loaded page chunk downloads.
+function PageLoader() {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-jarvis-cyan/30 border-t-jarvis-cyan" />
+    </div>
   );
 }

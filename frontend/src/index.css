@@ -27,6 +27,30 @@
   transition: --ws-accent 600ms ease, --ws-accent-soft 600ms ease, --ws-glow 600ms ease;
 }
 
+/* Accessibility: fully honor the OS "reduce motion" preference for every
+   CSS-driven animation/transition (framer-motion is handled separately via
+   <MotionConfig reducedMotion="user">). Near-zero durations keep end states
+   correct without motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Performance: pause every CSS animation while the tab is backgrounded
+   (DashboardShell toggles .motion-paused on visibilitychange), so the many
+   ambient/orbital layers don't burn cycles off-screen. */
+:root.motion-paused *,
+:root.motion-paused *::before,
+:root.motion-paused *::after {
+  animation-play-state: paused !important;
+}
+
 @layer base {
   /* Light theme is the default palette; .dark (toggled by ThemeContext)
      overrides every token below. Values are "R G B" triples (no commas, no

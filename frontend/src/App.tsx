@@ -1,33 +1,39 @@
+import { lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { useAuth } from "@/context/AuthContext";
 import DashboardShell from "@/components/DashboardShell";
-import ApprovalsPage from "@/pages/Approvals";
-import AutomationPage from "@/pages/Automation";
-import ChatPage from "@/pages/Chat";
-import IntegrationsPage from "@/pages/Integrations";
-import PluginsPage from "@/pages/Plugins";
-import SettingsPage from "@/pages/Settings";
-import AmazonLaunchCenterPage from "@/pages/company/AmazonLaunch";
-import CompanyDashboardPage from "@/pages/company/CompanyDashboard";
-import ContentCalendarPage from "@/pages/company/ContentCalendar";
-import CrmPage from "@/pages/company/Crm";
-import FinancialDashboardPage from "@/pages/company/Financials";
-import InventoryPage from "@/pages/company/Inventory";
-import ManufacturingTrackerPage from "@/pages/company/Manufacturing";
-import MarketingStudioPage from "@/pages/company/MarketingStudio";
-import ProjectManagerPage from "@/pages/company/Projects";
-import SopLibraryPage from "@/pages/company/Sops";
-import WebsiteBuilderPage from "@/pages/company/WebsiteBuilder";
-import CompanyProfile from "@/pages/CompanyProfile";
-import Dashboard from "@/pages/Dashboard";
-import DailyBriefPage from "@/pages/DailyBrief";
-import BusinessIdeaIncubatorPage from "@/pages/Ideas";
-import InvestmentDashboardPage from "@/pages/Investments";
+// Login is eager (pre-auth entry, first paint); the shell is eager (it's the
+// persistent chrome). Every routed page is code-split so the initial bundle
+// stays small and each workspace module loads on demand — this scales as more
+// modules/workspaces are added.
 import Login from "@/pages/Login";
-import MemoryPage from "@/pages/Memory";
-import ProjectWorkspacePage from "@/pages/ProjectWorkspace";
-import StudioPage from "@/pages/Studio";
+
+const ApprovalsPage = lazy(() => import("@/pages/Approvals"));
+const AutomationPage = lazy(() => import("@/pages/Automation"));
+const ChatPage = lazy(() => import("@/pages/Chat"));
+const IntegrationsPage = lazy(() => import("@/pages/Integrations"));
+const PluginsPage = lazy(() => import("@/pages/Plugins"));
+const SettingsPage = lazy(() => import("@/pages/Settings"));
+const AmazonLaunchCenterPage = lazy(() => import("@/pages/company/AmazonLaunch"));
+const CompanyDashboardPage = lazy(() => import("@/pages/company/CompanyDashboard"));
+const ContentCalendarPage = lazy(() => import("@/pages/company/ContentCalendar"));
+const CrmPage = lazy(() => import("@/pages/company/Crm"));
+const FinancialDashboardPage = lazy(() => import("@/pages/company/Financials"));
+const InventoryPage = lazy(() => import("@/pages/company/Inventory"));
+const ManufacturingTrackerPage = lazy(() => import("@/pages/company/Manufacturing"));
+const MarketingStudioPage = lazy(() => import("@/pages/company/MarketingStudio"));
+const ProjectManagerPage = lazy(() => import("@/pages/company/Projects"));
+const SopLibraryPage = lazy(() => import("@/pages/company/Sops"));
+const WebsiteBuilderPage = lazy(() => import("@/pages/company/WebsiteBuilder"));
+const CompanyProfile = lazy(() => import("@/pages/CompanyProfile"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const DailyBriefPage = lazy(() => import("@/pages/DailyBrief"));
+const BusinessIdeaIncubatorPage = lazy(() => import("@/pages/Ideas"));
+const InvestmentDashboardPage = lazy(() => import("@/pages/Investments"));
+const MemoryPage = lazy(() => import("@/pages/Memory"));
+const ProjectWorkspacePage = lazy(() => import("@/pages/ProjectWorkspace"));
+const StudioPage = lazy(() => import("@/pages/Studio"));
 
 // Single auth gate + shell for the whole authenticated route tree, instead
 // of every route wrapping itself individually. DashboardShell renders once
