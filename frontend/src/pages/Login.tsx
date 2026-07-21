@@ -20,7 +20,10 @@ export default function Login() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, password);
+      // Emails are case-insensitive and stored lowercase; normalize so an
+      // iOS-autocapitalized or padded address still matches (the backend does
+      // an exact match).
+      await login(email.trim().toLowerCase(), password);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Unable to sign in.");
     } finally {
@@ -78,6 +81,10 @@ export default function Login() {
             <input
               type="email"
               required
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              inputMode="email"
               placeholder="you@business.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
