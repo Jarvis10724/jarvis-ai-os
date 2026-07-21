@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import CurrentUser
 from app.db.models.company import Company, Product
 from app.db.session import get_db
-from app.exceptions import NotFoundError
+from app.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -103,6 +103,10 @@ class CompanyRead(BaseModel):
     tagline: str | None
     industry: str | None
     website: str | None
+    # Structured workspace metadata — see Company model.
+    company_type: str | None
+    parent_company_id: str | None
+    parent_company_name: str | None
     divisions: list[str]
     sections: dict[str, SectionData]
     owners: list[OwnerRole]
@@ -116,6 +120,8 @@ class CompanyCreate(BaseModel):
     tagline: str | None = None
     industry: str | None = None
     website: str | None = None
+    company_type: str | None = None
+    parent_company_id: str | None = None
     divisions: list[str] | None = None
 
 
@@ -124,6 +130,8 @@ class CompanyUpdate(BaseModel):
     tagline: str | None = None
     industry: str | None = None
     website: str | None = None
+    company_type: str | None = None
+    parent_company_id: str | None = None
     divisions: list[str] | None = None
     sections: dict[str, SectionData] | None = None
     owners: list[OwnerRole] | None = None
@@ -178,6 +186,9 @@ def _serialize(company: Company) -> CompanyRead:
         tagline=company.tagline,
         industry=company.industry,
         website=company.website,
+        company_type=company.company_type,
+        parent_company_id=company.parent_company_id,
+        parent_company_name=company.parent.name if company.parent else None,
         divisions=divisions,
         sections={k: SectionData(**v) for k, v in sections.items()},
         owners=[OwnerRole(**o) for o in owners],
@@ -196,6 +207,17 @@ def _get_owned_company(company_id: str, current_user, db: Session) -> Company:
     return company
 
 
+def _validate_parent(parent_id: str | None, current_user, db: Session, self_id: str | None = None) -> None:
+    """A parent workspace must exist, belong to the same owner (never cross
+    accounts — workspace isolation is a hard rule), and not be the company
+    itself. Passing None (clearing the parent) is always allowed."""
+    if not parent_id:
+        return
+    if parent_id == self_id:
+        raise ValidationError("A workspace cannot be its own parent.")
+    _get_owned_company(parent_id, current_user, db)  # raises NotFoundError if not owned
+
+
 @router.get("", response_model=list[CompanyRead])
 def list_companies(current_user: CurrentUser, db: Session = Depends(get_db)):
     companies = db.query(Company).filter(Company.owner_id == current_user.id).all()
@@ -204,12 +226,15 @@ def list_companies(current_user: CurrentUser, db: Session = Depends(get_db)):
 
 @router.post("", response_model=CompanyRead, status_code=201)
 def create_company(payload: CompanyCreate, current_user: CurrentUser, db: Session = Depends(get_db)):
+    _validate_parent(payload.parent_company_id, current_user, db)
     company = Company(
         owner_id=current_user.id,
         name=payload.name,
         tagline=payload.tagline,
         industry=payload.industry,
         website=payload.website,
+        company_type=payload.company_type,
+        parent_company_id=payload.parent_company_id,
         divisions_json=json.dumps(payload.divisions) if payload.divisions else None,
         sections_json=json.dumps(DEFAULT_SECTIONS),
         owners_json=json.dumps(DEFAULT_OWNERS),
@@ -240,6 +265,13 @@ def update_company(
         company.industry = payload.industry
     if payload.website is not None:
         company.website = payload.website
+    if payload.company_type is not None:
+        company.company_type = payload.company_type or None
+    if payload.parent_company_id is not None:
+        # Empty string clears the parent; otherwise validate ownership + no self-ref.
+        parent_id = payload.parent_company_id or None
+        _validate_parent(parent_id, current_user, db, self_id=company.id)
+        company.parent_company_id = parent_id
     if payload.divisions is not None:
         company.divisions_json = json.dumps(payload.divisions)
     if payload.sections is not None:

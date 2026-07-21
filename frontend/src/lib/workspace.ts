@@ -136,8 +136,21 @@ function haystack(company: Company): string {
  * (more specific kinds are tested first). No backend field; a future explicit
  * `Company.kind` should be preferred here when present.
  */
+const VALID_KINDS: WorkspaceKind[] = [
+  "innovation-hub",
+  "consumer-brands",
+  "investment",
+  "real-estate",
+  "venture",
+  "business",
+];
+
 export function classifyWorkspace(company: Company | null | undefined): WorkspaceKind {
   if (!company) return "business";
+  // Prefer explicit structured metadata (company_type) — the heuristic is only
+  // a fallback for workspaces that haven't been classified yet.
+  const explicit = company.company_type as WorkspaceKind | null | undefined;
+  if (explicit && VALID_KINDS.includes(explicit)) return explicit;
   const h = haystack(company);
   if (/real\s?estate|realty|propert|reit/.test(h)) return "real-estate";
   if (/consumer|goods|brand|retail|commerce|cpg|apparel|beauty|cosmetic|merch|dtc|e-?commerce/.test(h))

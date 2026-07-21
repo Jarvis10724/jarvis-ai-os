@@ -383,6 +383,12 @@ export interface Company {
   tagline: string | null;
   industry: string | null;
   website: string | null;
+  // Structured workspace metadata (drives modules, AI behavior, branding).
+  // company_type is the workspace kind (see lib/workspace.WorkspaceKind);
+  // classifyWorkspace prefers it over the name/industry heuristic.
+  company_type: string | null;
+  parent_company_id: string | null;
+  parent_company_name: string | null;
   divisions: string[];
   sections: Record<string, CompanySection>;
   owners: CompanyOwner[];
