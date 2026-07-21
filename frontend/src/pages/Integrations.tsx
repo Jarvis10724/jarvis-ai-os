@@ -7,6 +7,7 @@ import StatusPill from "@/components/StatusPill";
 import { api, ApiError } from "@/api/client";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
+import { resolveWorkspace } from "@/lib/workspace";
 import type { IntegrationStatus } from "@/types";
 
 // Capabilities with a real, working server-side OAuth flow today — the
@@ -114,6 +115,36 @@ export default function IntegrationsPage() {
             Each company can connect its own Gmail account — credentials never cross workspaces.
           </p>
         </div>
+
+        {/* Workspace-aware guidance: which integrations are typical for this kind
+            of workspace. The backend scopes every connection per-company, so
+            adding a new integration is data, not a redesign. */}
+        {(() => {
+          const selected = companies.find((c) => c.id === companyFilter) ?? null;
+          if (!selected) return null;
+          const ws = resolveWorkspace(selected);
+          return (
+            <div className="hud-panel hud-corner p-4">
+              <p className="text-xs text-jarvis-muted">
+                <span className="font-semibold text-jarvis-text">{selected.name}</span>{" "}
+                <span className="text-jarvis-faint">· {ws.role}</span>
+              </p>
+              <p className="mt-1.5 text-[11px] uppercase tracking-widest text-jarvis-faint">
+                Typical for this workspace
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {ws.integrationFocus.map((label) => (
+                  <span
+                    key={label}
+                    className="rounded-lg border border-jarvis-border/70 bg-jarvis-panel2/40 px-2.5 py-1 text-[11px] text-jarvis-muted"
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {loading && (
           <div className="flex flex-1 items-center justify-center">

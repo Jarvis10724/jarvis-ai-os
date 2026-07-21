@@ -5,7 +5,7 @@ import type { LucideIcon } from "lucide-react";
 
 export type OrbitalTone = "cyan" | "blue" | "violet" | "amber" | "emerald" | "rose";
 
-const TONE_STYLES: Record<OrbitalTone, { border: string; text: string; glow: string; badgeBg: string }> = {
+export const TONE_STYLES: Record<OrbitalTone, { border: string; text: string; glow: string; badgeBg: string }> = {
   cyan: { border: "border-jarvis-cyan/40", text: "text-jarvis-cyan", glow: "hover:shadow-glow-sm", badgeBg: "bg-jarvis-cyan" },
   blue: { border: "border-jarvis-blue/40", text: "text-jarvis-blue", glow: "hover:shadow-glow-sm", badgeBg: "bg-jarvis-blue" },
   violet: { border: "border-jarvis-violet/40", text: "text-jarvis-violet", glow: "", badgeBg: "bg-jarvis-violet" },

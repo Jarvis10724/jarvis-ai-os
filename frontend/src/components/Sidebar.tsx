@@ -31,30 +31,35 @@ import JarvisCore from "@/components/JarvisCore";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
 import { isModuleVisibleForCompany, type ModuleCategory } from "@/lib/companyModules";
+import { classifyWorkspace, moduleSurfacesForKind, type WorkspaceCapability } from "@/lib/workspace";
 
 // Exported so CommandPalette can flatten these into "jump to any page"
 // entries without a second, separately-maintained route registry.
-export const GLOBAL_ITEMS = [
+export const GLOBAL_ITEMS: NavEntry[] = [
   { to: "/", label: "Overview", icon: Home, end: true },
   { to: "/daily-brief", label: "Daily Brief", icon: Sunrise },
   { to: "/investments", label: "Investment Dashboard", icon: LineChart, category: "investing" as const },
-  { to: "/ideas", label: "Idea Incubator", icon: Lightbulb },
+  { to: "/ideas", label: "Idea Incubator", icon: Lightbulb, capability: "incubation" },
   { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/memory", label: "Memory", icon: BrainCircuit },
 ];
 
-export const WORKSPACE_ITEMS = [
-  { to: "/company/dashboard", label: "Company Dashboard", icon: LayoutDashboard },
-  { to: "/company/projects", label: "Project Manager", icon: Rocket },
-  { to: "/company/crm", label: "CRM", icon: Users },
-  { to: "/company/sops", label: "SOP Library", icon: BookOpen },
-  { to: "/company/manufacturing-tracker", label: "Manufacturing Tracker", icon: Factory },
-  { to: "/company/inventory", label: "Inventory", icon: Boxes },
-  { to: "/company/financials", label: "Financial Dashboard", icon: DollarSign },
-  { to: "/company/marketing-studio", label: "AI Marketing Studio", icon: Megaphone },
-  { to: "/company/content-calendar", label: "Content Calendar", icon: CalendarDays },
-  { to: "/company/website-builder", label: "Website Builder", icon: Globe },
-  { to: "/company/amazon-launch", label: "Amazon Launch Center", icon: PackageSearch },
+// Workspace modules are tagged with the capability they belong to, so a
+// workspace only surfaces the ones relevant to its kind (see lib/workspace).
+// e.g. an innovation-hub hides manufacturing/commerce/marketing; a
+// consumer-brands workspace shows them all.
+export const WORKSPACE_ITEMS: NavEntry[] = [
+  { to: "/company/dashboard", label: "Company Dashboard", icon: LayoutDashboard, capability: "operations" },
+  { to: "/company/projects", label: "Project Manager", icon: Rocket, capability: "operations" },
+  { to: "/company/crm", label: "CRM", icon: Users, capability: "operations" },
+  { to: "/company/sops", label: "SOP Library", icon: BookOpen, capability: "operations" },
+  { to: "/company/manufacturing-tracker", label: "Manufacturing Tracker", icon: Factory, capability: "manufacturing" },
+  { to: "/company/inventory", label: "Inventory", icon: Boxes, capability: "manufacturing" },
+  { to: "/company/financials", label: "Financial Dashboard", icon: DollarSign, capability: "finance" },
+  { to: "/company/marketing-studio", label: "AI Marketing Studio", icon: Megaphone, capability: "marketing" },
+  { to: "/company/content-calendar", label: "Content Calendar", icon: CalendarDays, capability: "marketing" },
+  { to: "/company/website-builder", label: "Website Builder", icon: Globe, capability: "commerce" },
+  { to: "/company/amazon-launch", label: "Amazon Launch Center", icon: PackageSearch, capability: "commerce" },
 ];
 
 export const SYSTEM_ITEMS = [
@@ -70,6 +75,7 @@ export type NavEntry = {
   icon: typeof Home;
   end?: boolean;
   category?: ModuleCategory;
+  capability?: WorkspaceCapability;
 };
 
 function NavSection({
@@ -131,10 +137,14 @@ function NavSection({
 
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { activeCompany } = useCompany();
-  // Context-aware: only show modules relevant to the active workspace.
-  const globalItems = GLOBAL_ITEMS.filter((i) =>
-    isModuleVisibleForCompany(i.category, activeCompany)
+  // Context-aware: only show modules relevant to the active workspace — gated
+  // both by the investing category (showsInvestments) and by the workspace's
+  // capability set (its kind), so each workspace surfaces just its own modules.
+  const kind = classifyWorkspace(activeCompany);
+  const globalItems = GLOBAL_ITEMS.filter(
+    (i) => isModuleVisibleForCompany(i.category, activeCompany) && moduleSurfacesForKind(i.capability, kind)
   );
+  const workspaceItems = WORKSPACE_ITEMS.filter((i) => moduleSurfacesForKind(i.capability, kind));
 
   return (
     <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4">
@@ -142,7 +152,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       {activeCompany && (
         <NavSection
           label={`Workspace — ${activeCompany.name}`}
-          items={WORKSPACE_ITEMS}
+          items={workspaceItems}
           delayOffset={GLOBAL_ITEMS.length}
           onNavigate={onNavigate}
         />

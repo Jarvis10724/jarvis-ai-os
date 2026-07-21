@@ -16,7 +16,6 @@ import {
   Sunrise,
   Users,
   X,
-  type LucideIcon,
 } from "lucide-react";
 
 import { api } from "@/api/client";
@@ -25,29 +24,21 @@ import CalendarCard from "@/components/ceo/CalendarCard";
 import GmailCard from "@/components/ceo/GmailCard";
 import ConnectionLines from "@/components/orbital/ConnectionLines";
 import MicDiagnosticPanel from "@/components/orbital/MicDiagnosticPanel";
+import MobileCommandDeck from "@/components/orbital/MobileCommandDeck";
 import OrbitalCore from "@/components/orbital/OrbitalCore";
-import OrbitalNode, { type OrbitalTone } from "@/components/orbital/OrbitalNode";
+import OrbitalNode from "@/components/orbital/OrbitalNode";
 import OrbitRing from "@/components/orbital/OrbitRing";
 import VoiceConsole from "@/components/orbital/VoiceConsole";
 import WorkspaceSwitcherPopover from "@/components/orbital/WorkspaceSwitcherPopover";
+import type { NodeSpec } from "@/components/orbital/types";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useDashboardUI } from "@/context/DashboardUIContext";
 import { useMicrophoneDevices } from "@/hooks/useMicrophoneDevices";
 import { useVoiceOrb, toCoreState } from "@/hooks/useVoiceOrb";
+import { useWorkspace } from "@/hooks/useWorkspace";
 import { MOCK_WATCHLIST } from "@/mock/investments";
 import { showsInvestments } from "@/lib/companyModules";
-
-interface NodeSpec {
-  key: string;
-  icon: LucideIcon;
-  label: string;
-  sublabel?: string;
-  tone?: OrbitalTone;
-  badge?: number | string;
-  active?: boolean;
-  onClick: () => void;
-}
 
 function polar(cx: number, cy: number, radius: number, angleDeg: number) {
   const rad = (angleDeg * Math.PI) / 180;
@@ -83,6 +74,7 @@ type ExpandKey = "gmail" | "calendar" | "approvals" | null;
 export default function OrbitalHome() {
   const navigate = useNavigate();
   const { activeCompany, activeCompanyId } = useCompany();
+  const workspace = useWorkspace();
   const { setStatus } = useAssistantStatus();
   const { openNotifications } = useDashboardUI();
 
@@ -242,6 +234,15 @@ export default function OrbitalHome() {
   }, []);
 
   const { width, height } = size;
+  // Phone (portrait or short-landscape) → the thumb-first command deck; wider
+  // viewports → the full orbital constellation. The full circle clips on a
+  // phone, so we don't even try it there.
+  const compact = width > 0 && (width < 700 || height < 560);
+  // Mobile Core hero diameter — fits the ~42vh hero (clamped 224–380 in the
+  // deck) and the viewport width, so the Core never overflows into the dock.
+  const heroHeight = Math.min(380, Math.max(224, height * 0.42));
+  const mobileCoreDiameter = Math.max(180, Math.min(width - 56, heroHeight - 8, 340));
+
   // Reserve room at the bottom for the fixed VoiceConsole so the lowest
   // orbital node never sits behind it — the whole constellation shifts up.
   const BOTTOM_RESERVE = 104;
@@ -414,6 +415,20 @@ export default function OrbitalHome() {
         ? "Voice unavailable — type below"
         : undefined;
 
+  // Core identity — the workspace's name + its *kind* ("Innovation Hub",
+  // "Consumer Brands"), so switching companies visibly changes the Core's
+  // identity, not just its accent.
+  const coreTitle = activeCompany ? activeCompany.name.toUpperCase() : "JARVIS";
+  const coreSubtitle = (activeCompany ? workspace.role : "AI Operating System").toUpperCase();
+
+  // The switcher popover anchors under the Workspaces node on desktop; on
+  // mobile there's no such node, so it drops from just below the top bar.
+  const switcherAnchor = compact
+    ? { x: width / 2, y: 12 }
+    : workspacesNodePos
+      ? { x: workspacesNodePos.x, y: workspacesNodePos.y + 40 }
+      : { x: width / 2, y: 120 };
+
   return (
     <div
       ref={containerRef}
@@ -428,7 +443,7 @@ export default function OrbitalHome() {
         aria-hidden="true"
       >
         <div className="starfield" />
-        {ready && (
+        {ready && !compact && (
           <>
             <OrbitRing diameter={outerRadius * 2 + 140} durationSec={90} opacity={0.08} />
             <OrbitRing diameter={innerRadius * 2 + 90} durationSec={70} reverse opacity={0.1} />
@@ -436,7 +451,23 @@ export default function OrbitalHome() {
         )}
       </div>
 
-      {ready && (
+      {/* Mobile: thumb-first command deck. */}
+      {ready && compact && (
+        <MobileCommandDeck
+          coreDiameter={mobileCoreDiameter}
+          coreState={coreState}
+          coreTitle={coreTitle}
+          coreSubtitle={coreSubtitle}
+          hint={coreHint}
+          level={voice.level}
+          onCoreClick={voice.toggle}
+          dockSpecs={systemSpecs}
+          gridSpecs={workspaceSpecs}
+        />
+      )}
+
+      {/* Desktop: full orbital constellation. */}
+      {ready && !compact && (
         <div
           className="parallax-layer absolute inset-0"
           style={{ transform: "translate3d(calc(var(--par-x, 0) * -7px), calc(var(--par-y, 0) * -7px), 0)" }}
@@ -452,8 +483,8 @@ export default function OrbitalHome() {
           <OrbitalCore
             diameter={coreDiameter}
             state={coreState}
-            title={activeCompany ? activeCompany.name.toUpperCase() : "JARVIS"}
-            subtitle={activeCompany ? "ACTIVE WORKSPACE" : "AI OPERATING SYSTEM"}
+            title={coreTitle}
+            subtitle={coreSubtitle}
             hint={coreHint}
             level={voice.level}
             onClick={voice.toggle}
@@ -492,14 +523,16 @@ export default function OrbitalHome() {
             />
           ))}
 
-          {workspacesNodePos && (
-            <WorkspaceSwitcherPopover
-              open={switcherOpen}
-              onClose={() => setSwitcherOpen(false)}
-              anchor={{ x: workspacesNodePos.x, y: workspacesNodePos.y + 40 }}
-            />
-          )}
         </div>
+      )}
+
+      {/* Shared across both layouts — anchored per layout above. */}
+      {ready && (
+        <WorkspaceSwitcherPopover
+          open={switcherOpen}
+          onClose={() => setSwitcherOpen(false)}
+          anchor={switcherAnchor}
+        />
       )}
 
       <AnimatePresence>

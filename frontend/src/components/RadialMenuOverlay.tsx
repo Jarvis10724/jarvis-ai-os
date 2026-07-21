@@ -10,6 +10,7 @@ import { GLOBAL_ITEMS, SYSTEM_ITEMS, WORKSPACE_ITEMS, type NavEntry } from "@/co
 import { useCompany } from "@/context/CompanyContext";
 import { useCoreState } from "@/hooks/useCoreState";
 import { isModuleVisibleForCompany } from "@/lib/companyModules";
+import { classifyWorkspace, moduleSurfacesForKind } from "@/lib/workspace";
 
 function polar(cx: number, cy: number, radius: number, angleDeg: number) {
   const rad = (angleDeg * Math.PI) / 180;
@@ -71,9 +72,15 @@ export default function RadialMenuOverlay({ open, onClose }: { open: boolean; on
   const globalRadius = Math.max(150, shortSide * 0.28);
   const workspaceRadius = Math.max(220, shortSide * 0.42);
 
-  const workspaceItems = activeCompany ? WORKSPACE_ITEMS : [];
-  // Context-aware: only surface modules relevant to the active workspace.
-  const globalItems = GLOBAL_ITEMS.filter((i) => isModuleVisibleForCompany(i.category, activeCompany));
+  // Context-aware: only surface modules relevant to the active workspace —
+  // gated by investing category and by the workspace's capability set (kind).
+  const kind = classifyWorkspace(activeCompany);
+  const workspaceItems = activeCompany
+    ? WORKSPACE_ITEMS.filter((i) => moduleSurfacesForKind(i.capability, kind))
+    : [];
+  const globalItems = GLOBAL_ITEMS.filter(
+    (i) => isModuleVisibleForCompany(i.category, activeCompany) && moduleSurfacesForKind(i.capability, kind)
+  );
 
   const systemPositions = useMemo(
     () => SYSTEM_ITEMS.map((item, i) => ({ item, ...polar(cx, cy, systemRadius, -90 + (360 / SYSTEM_ITEMS.length) * i) })),
