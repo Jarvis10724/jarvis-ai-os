@@ -48,9 +48,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const scope = activeCompanyId ?? "none";
-      // Make sure the business has a default project before listing, so a
-      // brand-new company always has at least one project to attach to.
-      await api.getDefaultProject(activeCompanyId).catch(() => null);
+      // Ensure the active business has a default project before listing. Only
+      // when a company is actually active — otherwise we'd create a stray
+      // null-company "My Workspace" every time the app loads before the company
+      // context has resolved.
+      if (activeCompanyId) {
+        await api.getDefaultProject(activeCompanyId).catch(() => null);
+      }
       const list = await api.listProjects(scope);
       setProjects(list);
 
