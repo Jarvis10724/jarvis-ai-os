@@ -59,11 +59,11 @@ export default function RightDock() {
         {activePanel && (
           <motion.aside
             key={activePanel}
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "tween", duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-y-0 right-0 z-40 w-full max-w-sm border-l border-jarvis-border/60 bg-jarvis-panel/80 backdrop-blur-2xl lg:static lg:z-auto lg:w-[360px] lg:max-w-none lg:shrink-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed inset-0 z-40 w-auto border-l border-jarvis-border/60 bg-jarvis-panel/95 backdrop-blur-2xl lg:static lg:inset-auto lg:z-auto lg:w-[360px] lg:shrink-0 lg:bg-jarvis-panel/80"
           >
             {renderPanel(activePanel)}
           </motion.aside>

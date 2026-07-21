@@ -78,6 +78,9 @@ export default function StudioPage() {
   // this toggles the center column between the conversation and the workspace
   // panel (which holds the Website Builder preview + deliverables + tasks).
   const [mobileView, setMobileView] = useState<"chat" | "panel">("chat");
+  // Mobile-only: the sessions rail is hidden below md, so this dropdown lets you
+  // switch sessions / start a new one from the header on a phone.
+  const [showMobileSessions, setShowMobileSessions] = useState(false);
   const [activeStage, setActiveStage] = useState<string>("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -469,8 +472,52 @@ export default function StudioPage() {
       {/* Conversation column */}
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center justify-between gap-3 border-b border-jarvis-border/60 px-5 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <Icon className="h-4 w-4 shrink-0 text-jarvis-cyan md:hidden" />
+          <div className="relative flex min-w-0 items-center gap-2">
+            {/* Mobile-only session picker (the sessions rail is hidden < md) */}
+            <button
+              onClick={() => setShowMobileSessions((v) => !v)}
+              title="Sessions"
+              className="press-scale flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-jarvis-border bg-jarvis-panel2/50 text-jarvis-cyan md:hidden"
+            >
+              <History className="h-4 w-4" />
+            </button>
+            {showMobileSessions && (
+              <>
+                <div className="fixed inset-0 z-30 md:hidden" onClick={() => setShowMobileSessions(false)} />
+                <div className="absolute left-0 top-11 z-40 max-h-80 w-72 overflow-y-auto rounded-xl border border-jarvis-border bg-jarvis-panel p-2 shadow-elevated-lg md:hidden">
+                  <button
+                    onClick={() => {
+                      newSession();
+                      setShowMobileSessions(false);
+                    }}
+                    className="mb-1 flex w-full items-center gap-1.5 rounded-lg border border-jarvis-cyan/40 bg-jarvis-cyan/10 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-jarvis-cyan"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Session
+                  </button>
+                  {sessions.length === 0 ? (
+                    <p className="px-2 py-3 text-center text-xs text-jarvis-muted">No sessions yet.</p>
+                  ) : (
+                    sessions.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => {
+                          openSession(s.id);
+                          setShowMobileSessions(false);
+                        }}
+                        className={clsx(
+                          "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition",
+                          detail?.id === s.id
+                            ? "bg-jarvis-cyan/10 text-jarvis-cyan"
+                            : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
             {renaming ? (
               <input
                 autoFocus

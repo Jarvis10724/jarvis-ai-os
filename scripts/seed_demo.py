@@ -356,6 +356,35 @@ def main() -> None:
                                    kind=kind, title=title, content=content, source="manual"))
                 created.append(f"memory '{title}'")
 
+        # 8) Pending approvals — so the Notification Center + Approvals page show
+        #    polished, real content during the demo (labeled demo actions; none
+        #    are ever executed against a live service).
+        pending = [
+            ("email", "send", {
+                "to": "list@primalpennicollective.com",
+                "subject": "Copper Glow Serum is live 🎉",
+                "body": "DEMO — Announce the Copper Glow Serum launch to the newsletter.",
+            }),
+            ("google_calendar", "create_event", {
+                "title": "Spring drop planning",
+                "start": "2026-07-24T15:00:00Z",
+                "notes": "DEMO — kickoff for the Spring Launch Campaign.",
+            }),
+        ]
+        for cap, act, payload in pending:
+            exists = db.query(ApprovalRequest).filter(
+                ApprovalRequest.owner_id == user.id, ApprovalRequest.company_id == company.id,
+                ApprovalRequest.capability_name == cap, ApprovalRequest.action_type == act,
+                ApprovalRequest.status == "pending",
+            ).first()
+            if not exists:
+                db.add(ApprovalRequest(
+                    owner_id=user.id, company_id=company.id, project_id=showcase.id,
+                    capability_name=cap, action_type=act,
+                    payload_json=json.dumps(payload), status="pending", requested_by=user.id,
+                ))
+                created.append(f"pending approval {cap}·{act}")
+
         db.commit()
         print("Demo seed complete.")
         print(f"  Login:    {DEMO_EMAIL}  /  {DEMO_PASSWORD}")
