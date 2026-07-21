@@ -54,13 +54,16 @@ export default function DashboardShell() {
         {/* Decorative ambient glow layer — fixed behind every screen so the
             whole app shares one quietly "alive" backdrop, not just Chat. */}
         <div className="ambient-orbs" aria-hidden="true">
+          {/* The two lead orbs carry the active workspace's accent (cross-fading
+              on switch) so the whole backdrop "changes universe"; the third
+              stays neutral blue for depth variety. */}
           <span
-            className="h-[26rem] w-[26rem] bg-jarvis-cyan"
-            style={{ top: "-8rem", left: "-6rem", animationDelay: "0s" }}
+            className="h-[26rem] w-[26rem]"
+            style={{ top: "-8rem", left: "-6rem", animationDelay: "0s", backgroundColor: "var(--ws-accent)" }}
           />
           <span
-            className="h-[22rem] w-[22rem] bg-jarvis-violet"
-            style={{ top: "40%", right: "-8rem", animationDelay: "3s" }}
+            className="h-[22rem] w-[22rem]"
+            style={{ top: "40%", right: "-8rem", animationDelay: "3s", backgroundColor: "var(--ws-glow)" }}
           />
           <span
             className="h-[20rem] w-[20rem] bg-jarvis-blue"

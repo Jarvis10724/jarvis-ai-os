@@ -94,7 +94,8 @@ export default function RadialNav() {
           ref={workspaceBtnRef}
           onClick={openSwitcher}
           title={activeCompany ? activeCompany.name : "No workspace"}
-          className="press-scale flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-jarvis-border bg-jarvis-panel2/60 text-xs font-bold text-jarvis-cyan transition hover:border-jarvis-cyan/50"
+          className="press-scale flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-jarvis-border bg-jarvis-panel2/60 text-xs font-bold transition"
+          style={{ color: "var(--ws-accent)", borderColor: activeCompany ? "var(--ws-accent-soft)" : undefined }}
         >
           {activeCompany ? initials(activeCompany.name) : "—"}
         </button>

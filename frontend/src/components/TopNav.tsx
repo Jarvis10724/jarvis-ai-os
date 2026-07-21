@@ -74,9 +74,13 @@ export default function TopNav({
       {activeCompany && (
         <button
           onClick={onOpenMobileNav}
-          className="press-scale flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-jarvis-border/70 bg-jarvis-panel2/40 py-1.5 pl-2 pr-3 text-left transition hover:border-jarvis-cyan/40 sm:hidden"
+          className="press-scale flex min-w-0 flex-1 items-center gap-2 rounded-xl border py-1.5 pl-2 pr-3 text-left transition sm:hidden"
+          style={{ borderColor: "var(--ws-accent-soft)", backgroundColor: "var(--ws-accent-faint)" }}
         >
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-jarvis-cyan/10 text-jarvis-cyan">
+          <span
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+            style={{ backgroundColor: "var(--ws-accent-faint)", color: "var(--ws-accent)" }}
+          >
             <Building2 className="h-3.5 w-3.5" />
           </span>
           <span className="min-w-0">

@@ -16,6 +16,8 @@ export interface WorkspaceTheme {
   accent: string;
   /** Translucent accent for rings/fills. */
   accentSoft: string;
+  /** Very faint accent for subtle tinted backgrounds (chips, hovers). */
+  accentFaint: string;
   /** Glow color for blooms/shadows. */
   glow: string;
   /** Two-layer ambient gradient for the shell backdrop. */
@@ -50,6 +52,7 @@ export function themeForCompany(company: Company | null | undefined): WorkspaceT
   const hue = company ? ACCENT_HUES[hashString(company.id || company.name) % ACCENT_HUES.length] : JARVIS_HUE;
   const accent = `hsl(${hue} 88% 62%)`;
   const accentSoft = `hsla(${hue}, 88%, 62%, 0.5)`;
+  const accentFaint = `hsla(${hue}, 88%, 62%, 0.14)`;
   const glow = `hsla(${hue}, 92%, 60%, 0.38)`;
   const gradient =
     `radial-gradient(ellipse 80% 50% at 18% -12%, hsla(${hue}, 85%, 55%, 0.20), transparent 60%), ` +
@@ -58,6 +61,7 @@ export function themeForCompany(company: Company | null | undefined): WorkspaceT
     hue,
     accent,
     accentSoft,
+    accentFaint,
     glow,
     gradient,
     monogram: company ? monogramFor(company.name) : "JV",

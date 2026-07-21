@@ -2,6 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Per-workspace accent custom properties, registered as real <color> types so
+   they can *transition* — switching workspaces cross-fades the accent instead
+   of snapping. WorkspaceThemeVars writes these on <html>; consumers read
+   var(--ws-accent) etc. (fallback cyan for "no active workspace"). @property is
+   ignored on older engines, degrading to an instant (still correct) swap. */
+@property --ws-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(45, 212, 240);
+}
+@property --ws-accent-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(45, 212, 240, 0.5);
+}
+@property --ws-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(45, 212, 240, 0.35);
+}
+:root {
+  /* The whole app eases when the workspace accent changes. */
+  transition: --ws-accent 600ms ease, --ws-accent-soft 600ms ease, --ws-glow 600ms ease;
+}
+
 @layer base {
   /* Light theme is the default palette; .dark (toggled by ThemeContext)
      overrides every token below. Values are "R G B" triples (no commas, no
@@ -165,6 +190,8 @@
   .ambient-orbs > span {
     @apply absolute rounded-full opacity-40 blur-3xl;
     animation: float 9s ease-in-out infinite;
+    /* Cross-fade the tint when the workspace accent changes. */
+    transition: background-color 600ms ease;
   }
 
   @media (prefers-reduced-motion: reduce) {

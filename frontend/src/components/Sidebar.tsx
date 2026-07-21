@@ -110,19 +110,23 @@ function NavSection({
             className={({ isActive }) =>
               clsx(
                 "group relative flex items-center gap-3 rounded-lg px-3.5 py-2.5 text-sm font-medium transition-all duration-200",
-                isActive
-                  ? "bg-jarvis-cyan/10 text-jarvis-cyan"
-                  : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                isActive ? "font-semibold" : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
               )
+            }
+            // Active item takes the active workspace's accent (cross-fades on
+            // switch) so nav highlighting matches the current "universe".
+            style={({ isActive }) =>
+              isActive ? { color: "var(--ws-accent)", backgroundColor: "var(--ws-accent-faint)" } : undefined
             }
           >
             {({ isActive }) => (
               <>
                 <span
                   className={clsx(
-                    "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-jarvis-cyan transition-opacity duration-200",
+                    "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full transition-opacity duration-200",
                     isActive ? "opacity-100" : "opacity-0"
                   )}
+                  style={{ backgroundColor: "var(--ws-accent)" }}
                 />
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="truncate">{itemLabel}</span>
