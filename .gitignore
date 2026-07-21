@@ -18,6 +18,7 @@ frontend/.vite/
 
 # Data
 data/*.db
+data/*.db.bak*
 data/logs/*.log
 data/uploads/*
 !data/uploads/.gitkeep
