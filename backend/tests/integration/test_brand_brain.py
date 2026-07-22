@@ -180,6 +180,56 @@ def test_brand_context_is_source_of_truth(client, shopify_env, monkeypatch):
     assert "bestseller" in ctx["tags"]
 
 
+def test_sync_mirrors_brand_brain_into_project_memory(client, shopify_env, monkeypatch):
+    """A sync also writes company-scoped memory (one entry per product + a store
+    fact) so the AI Core can recall the catalog; a re-sync mirrors, never dupes."""
+    from app.db.models.memory import MemoryEntry
+    from app.db.session import SessionLocal
+
+    headers = _login(client, "bb-mem@example.com")
+    company = _company(client, headers, "Primal Penni")
+    _bind(company)
+    monkeypatch.setattr(
+        "app.integrations.shopify_admin_client.ShopifyAdminClient.execute",
+        _make_fake_execute([
+            _product_node(1, "Copper Glow Serum", "PP-CGS-30", "48.00", ["bestseller"]),
+            _product_node(2, "Renewal Night Cream", "PP-RNC-50", "54.00", ["night"]),
+        ]),
+    )
+    resp = client.post(f"{API}/brand-brain/sync?company_id={company}", headers=headers).json()
+    assert resp["memory_entries"] == 3  # 2 products + 1 store profile
+
+    db = SessionLocal()
+    try:
+        rows = db.query(MemoryEntry).filter(
+            MemoryEntry.company_id == company, MemoryEntry.source == "brand_brain"
+        ).all()
+        assert len(rows) == 3
+        assert sorted(r.kind for r in rows) == ["fact", "product", "product"]
+        assert "Copper Glow Serum" in {r.title for r in rows}
+        assert all(r.company_id == company and r.scope == "company" for r in rows)
+    finally:
+        db.close()
+
+    # Re-sync with one product gone → memory mirrors the store (no dupes, prunes).
+    monkeypatch.setattr(
+        "app.integrations.shopify_admin_client.ShopifyAdminClient.execute",
+        _make_fake_execute([_product_node(1, "Copper Glow Serum", "PP-CGS-30", "48.00", ["bestseller"])]),
+    )
+    resp2 = client.post(f"{API}/brand-brain/sync?company_id={company}", headers=headers).json()
+    assert resp2["memory_entries"] == 2  # 1 product + 1 store
+
+    db = SessionLocal()
+    try:
+        rows = db.query(MemoryEntry).filter(
+            MemoryEntry.company_id == company, MemoryEntry.source == "brand_brain"
+        ).all()
+        assert len(rows) == 2  # replaced, not duplicated
+        assert "Renewal Night Cream" not in {r.title for r in rows}
+    finally:
+        db.close()
+
+
 def test_context_absent_before_sync_does_not_error(client, shopify_env):
     headers = _login(client, "bb-empty@example.com")
     company = _company(client, headers, "Primal Penni")

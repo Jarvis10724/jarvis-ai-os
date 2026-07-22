@@ -775,6 +775,8 @@ export interface BrandBrainSyncResult {
   store_domain: string | null;
   product_count: number;
   collection_count: number;
+  /** How many company-scoped AI-memory entries the sync mirrored (products + store profile). */
+  memory_entries?: number;
   read_only: boolean;
   write_enabled: boolean;
 }
