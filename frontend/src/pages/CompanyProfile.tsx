@@ -3,11 +3,14 @@ import { useSearchParams } from "react-router-dom";
 import {
   Boxes,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CheckSquare,
   ClipboardCheck,
   FileText,
   Loader2,
   Megaphone,
+  Menu,
   Package,
   Palette,
   ShieldCheck,
@@ -70,6 +73,37 @@ export default function CompanyProfile() {
   const [activeTab, setActiveTab] = useState(
     () => SECTION_TABS.find((t) => t.key === searchParams.get("tab"))?.key ?? "brand"
   );
+  // The section rail is a sidebar on desktop and a menu on a phone. On a
+  // phone it starts collapsed and re-collapses after a section is picked, so
+  // the content panel gets the full screen width instead of sharing it with a
+  // list you've finished using. On desktop it stays open unless collapsed
+  // deliberately.
+  const [navOpen, setNavOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.matchMedia("(min-width: 768px)").matches
+  );
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window === "undefined" ? true : window.matchMedia("(min-width: 768px)").matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const sync = (e: MediaQueryList | MediaQueryListEvent) => {
+      setIsDesktop(e.matches);
+      setNavOpen(e.matches); // desktop opens the rail; a phone hands the width back
+    };
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  const activeSection = SECTION_TABS.find((t) => t.key === activeTab);
+  const activeLabel = activeSection?.label ?? "Sections";
+  const ActiveIcon = activeSection?.icon;
+
+  /** Picking a section never loses it — only the menu closes, and only on a phone. */
+  function selectTab(key: string) {
+    setActiveTab(key);
+    if (!isDesktop) setNavOpen(false);
+  }
+
   const [notesDraft, setNotesDraft] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [savedNotes, setSavedNotes] = useState(false);
@@ -204,8 +238,44 @@ export default function CompanyProfile() {
         {/* Stacks on a phone — a fixed side rail leaves the panel too narrow to
             operate at 375px — and returns to a side rail from md up. */}
         <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+          {/* Phone: the collapsed rail is a single bar naming the section
+              you're in. One tap reopens the full list; the section and the
+              panel underneath are untouched, so nothing is lost by closing it. */}
+          {!navOpen && (
+            <button
+              onClick={() => setNavOpen(true)}
+              aria-expanded={false}
+              aria-label={`Workspace sections — currently ${activeLabel}`}
+              className="hud-panel press-scale flex shrink-0 items-center gap-2 px-3 py-2.5 text-left md:hidden"
+            >
+              <Menu className="h-4 w-4 shrink-0 text-jarvis-muted" />
+              {ActiveIcon && <ActiveIcon className="h-4 w-4 shrink-0 text-jarvis-cyan" />}
+              <span className="flex-1 truncate text-sm font-medium text-jarvis-cyan">{activeLabel}</span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-jarvis-faint" />
+            </button>
+          )}
+
           {/* Tabs */}
-          <nav className="hud-panel flex shrink-0 gap-0.5 overflow-x-auto p-2 md:w-56 md:flex-col md:overflow-y-auto md:p-3">
+          <nav
+            className={clsx(
+              "hud-panel shrink-0 gap-0.5 md:flex md:flex-col md:overflow-y-auto md:p-3",
+              navOpen ? "flex flex-col p-2" : "hidden",
+              // Collapsed on desktop is a narrow icon rail, not a hidden menu —
+              // the sections stay one tap away on a screen that has room.
+              navOpen ? "md:w-56" : "md:w-14 md:items-center"
+            )}
+          >
+            {/* Desktop-only collapse control: the rail never closes on its own
+                here, only when it's deliberately collapsed. */}
+            <button
+              onClick={() => setNavOpen((v) => !v)}
+              aria-label={navOpen ? "Collapse sections" : "Expand sections"}
+              title={navOpen ? "Collapse sections" : "Expand sections"}
+              className="press-scale mb-1 hidden items-center justify-center rounded-lg p-2 text-jarvis-faint transition-colors hover:bg-jarvis-panel2/60 hover:text-jarvis-text md:flex"
+            >
+              {navOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+
             {SECTION_TABS.map(({ key, label, icon: Icon }, i) => {
               const tabStatus = !CUSTOM_TABS.has(key) ? company.sections[key]?.status : null;
               const isActive = activeTab === key;
@@ -215,9 +285,12 @@ export default function CompanyProfile() {
                   initial={{ opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.02 * i, duration: 0.25 }}
-                  onClick={() => setActiveTab(key)}
+                  onClick={() => selectTab(key)}
+                  aria-label={label}
+                  title={label}
                   className={clsx(
-                    "group relative flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-left text-sm font-medium transition-all duration-200",
+                    "group relative flex items-center gap-2.5 rounded-lg py-2.5 text-left text-sm font-medium transition-all duration-200",
+                    navOpen ? "px-3.5" : "px-2.5 md:justify-center",
                     isActive
                       ? "bg-jarvis-cyan/10 text-jarvis-cyan"
                       : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
@@ -230,11 +303,12 @@ export default function CompanyProfile() {
                     )}
                   />
                   <Icon className="h-4 w-4 shrink-0" />
-                  <span className="flex-1 truncate">{label}</span>
+                  <span className={clsx("flex-1 truncate", !navOpen && "md:hidden")}>{label}</span>
                   {tabStatus && (
                     <span
                       className={clsx(
                         "h-1.5 w-1.5 shrink-0 rounded-full",
+                        !navOpen && "md:absolute md:right-1.5 md:top-1.5",
                         tabStatus === "done" || tabStatus === "in_progress"
                           ? "bg-jarvis-emerald"
                           : tabStatus === "needs_rebuild"
