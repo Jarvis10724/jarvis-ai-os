@@ -703,9 +703,80 @@ export interface ShopifyStatus {
   configured: boolean;
   store_domain: string | null;
   api_version: string | null;
+  auth_method?: string | null;
   bound_workspace_id: string | null;
   active_workspace_is_bound: boolean;
   read_only: boolean;
+  write_enabled?: boolean;
+}
+
+// Brand Brain — the workspace's structured source of truth (mirrored read-only
+// from Shopify). See backend app/core/brand_brain_service.py.
+export interface BrandBrainSummary {
+  exists: boolean;
+  source?: string;
+  store_name?: string | null;
+  store_domain?: string | null;
+  currency?: string | null;
+  plan_name?: string | null;
+  store_metadata?: Record<string, unknown>;
+  product_count?: number;
+  collection_count?: number;
+  last_synced_at?: string | null;
+  read_only: boolean;
+  write_enabled?: boolean;
+}
+
+export interface BrandProductVariant {
+  id: string;
+  title: string | null;
+  sku: string | null;
+  price: number | null;
+  compareAtPrice: number | null;
+  inventoryQuantity: number | null;
+  availableForSale: boolean | null;
+  options: { name: string; value: string }[];
+  image: string | null;
+}
+
+export interface BrandProduct {
+  id: string;
+  shopify_id: string;
+  title: string;
+  handle: string | null;
+  status: string | null;
+  product_type: string | null;
+  vendor: string | null;
+  description: string | null;
+  tags: string[];
+  price_min: number | null;
+  price_max: number | null;
+  currency: string | null;
+  total_inventory: number | null;
+  featured_image: string | null;
+  images: { url: string | null; altText: string | null }[];
+  variants: BrandProductVariant[];
+  seo: { title?: string; description?: string };
+}
+
+export interface BrandCollection {
+  id: string;
+  shopify_id: string;
+  title: string;
+  handle: string | null;
+  description: string | null;
+  products_count: number | null;
+  image_url: string | null;
+}
+
+export interface BrandBrainSyncResult {
+  synced_at: string;
+  store_name: string | null;
+  store_domain: string | null;
+  product_count: number;
+  collection_count: number;
+  read_only: boolean;
+  write_enabled: boolean;
 }
 
 export type IdeaStage = "idea" | "validating" | "building" | "launched" | "parked";

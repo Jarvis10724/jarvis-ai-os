@@ -36,6 +36,10 @@ import type {
   AgentRunDetail,
   Client,
   ShopifyStatus,
+  BrandBrainSummary,
+  BrandProduct,
+  BrandCollection,
+  BrandBrainSyncResult,
   WorkspaceArtifact,
   WorkspaceConfig,
   WorkspaceDetail,
@@ -392,6 +396,17 @@ export const api = {
   // reports whether the active workspace is the one bound to the store.
   getShopifyStatus: (companyId?: string) =>
     apiRequest<ShopifyStatus>(`/shopify/status${companyId ? `?company_id=${encodeURIComponent(companyId)}` : ""}`),
+
+  // Brand Brain — the workspace's structured source of truth (read from Jarvis's
+  // own DB; sync imports from Shopify read-only).
+  getBrandBrain: (companyId: string) =>
+    apiRequest<BrandBrainSummary>(`/brand-brain?company_id=${encodeURIComponent(companyId)}`),
+  listBrandProducts: (companyId: string, limit = 100) =>
+    apiRequest<BrandProduct[]>(`/brand-brain/products?company_id=${encodeURIComponent(companyId)}&limit=${limit}`),
+  listBrandCollections: (companyId: string) =>
+    apiRequest<BrandCollection[]>(`/brand-brain/collections?company_id=${encodeURIComponent(companyId)}`),
+  syncBrandBrain: (companyId: string) =>
+    apiRequest<BrandBrainSyncResult>(`/brand-brain/sync?company_id=${encodeURIComponent(companyId)}`, { method: "POST" }),
 
   // Quick-Action workspaces — persistent, streaming "studio" sessions.
   listWorkspaceActions: () => apiRequest<WorkspaceConfig[]>("/workspaces/actions"),

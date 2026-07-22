@@ -3,6 +3,7 @@ Import every model here so Base.metadata is fully populated for Alembic
 autogenerate and for `Base.metadata.create_all()` in tests/dev bootstrap.
 """
 from app.db.models.agent_run import AgentRun
+from app.db.models.brand_brain import BrandBrain, BrandCollection, BrandProduct
 from app.db.models.capability import (
     ApprovalRequest,
     CapabilityAuditLog,
@@ -41,4 +42,7 @@ __all__ = [
     "ScheduledJob",
     "OAuthState",
     "AgentRun",
+    "BrandBrain",
+    "BrandProduct",
+    "BrandCollection",
 ]

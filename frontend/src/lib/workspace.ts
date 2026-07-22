@@ -276,11 +276,11 @@ export const WORKSPACE_DOMAINS: WorkspaceDomain[] = [
   },
   {
     key: "brand",
-    label: "Brand & Products",
-    description: "Logos, colors, products",
+    label: "Brand Brain",
+    description: "Products, pricing, brand source of truth",
     icon: Palette,
     capability: "core",
-    route: () => "/company",
+    route: () => "/company/brand-brain",
   },
   {
     key: "tasks",
