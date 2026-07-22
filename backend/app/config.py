@@ -148,6 +148,11 @@ class Settings(BaseSettings):
     # payload so the UI can show a "Read-only" badge; any future write path must
     # refuse unless this is True.
     SHOPIFY_WRITE_ENABLED: bool = False
+    # The OAuth scopes the installed Shopify app actually holds. The write
+    # executor checks an action's required scope against this before attempting
+    # anything, so a change can't be "approved and committed" against a scope
+    # that was never granted. Mirrors shopify.app.toml — update both together.
+    SHOPIFY_SCOPES: str = "read_products,read_inventory"
 
     # Market data for the Investment Dashboard's watchlist/news — free-tier
     # key from https://finnhub.io. Leave blank to keep the dashboard in its

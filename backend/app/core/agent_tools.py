@@ -502,21 +502,36 @@ async def _propose_store_change(
         )
     if not isinstance(changes, dict) or not changes:
         return "Nothing to change — describe the specific fields and values."
+    # Build the preview FIRST: the approval must show current -> proposed
+    # against the live catalog, not just the value being asked for.
+    from app.core import approval_brief, shopify_write_service
+
+    preview = shopify_write_service.build_preview(
+        db, company_id=company_id, action_type=action, changes=changes
+    )
     try:
         approval = capability_service.propose_action(
             db,
             owner_id=current_user.id,
             capability_name="shopify",
             action_type=action,
-            payload=changes,
+            payload={**changes, "_preview": preview},
             company_id=company_id,
             requested_by=current_user.id,
-            brief={"reason": reason or None},
+            brief={
+                "reason": reason or None,
+                "expected_outcome": (
+                    shopify_write_service.describe_preview(preview)
+                    + ". "
+                    + approval_brief.build_brief("shopify", action, changes)["expected_outcome"]
+                ),
+            },
         )
     except Exception as exc:  # noqa: BLE001 - report, never half-apply
         return f"Couldn't prepare that change: {exc}"
     return (
         f"Prepared for your approval: {approval['summary']}\n"
+        f"Preview: {shopify_write_service.describe_preview(preview)}\n"
         f"Nothing has changed on the store. Review it in the Approval Center "
         f"(workspace: {company.name}) — you can edit the values before approving."
     )

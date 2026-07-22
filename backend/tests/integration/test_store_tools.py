@@ -216,7 +216,9 @@ async def test_preparing_a_store_change_creates_an_approval_and_changes_nothing(
     assert "120" in step["summary"]
     assert "Restocking" in (step["reason"] or "")
     # The brief must not imply the store is about to change.
-    assert "nothing is pushed to shopify" in step["expected_outcome"].lower()
+    outcome = step["expected_outcome"].lower()
+    assert "nothing is pushed to shopify" in outcome   # the standing guarantee
+    assert "→" in step["expected_outcome"] or "->" in outcome  # plus the before→after preview
 
     # The catalog is untouched — the proposal is a request, not a write.
     assert "inventory=42" in await _run("store_catalog", client, headers, company_id=company)
@@ -231,9 +233,12 @@ async def test_every_storefront_change_type_is_approval_gated(client):
     shopify = get_capability("shopify")
     for action in _STORE_CHANGES.values():
         assert shopify.action(action).requires_approval, f"{action} is not approval-gated"
-    # Nothing registered to auto-perform Shopify writes: approving records the
-    # decision, it never publishes by itself.
-    assert "shopify" not in _EXECUTORS
+    # There IS a shopify executor now (the action layer), but it cannot publish
+    # by itself: with the kill-switch off it refuses instead of writing, and the
+    # request is left 'approved' rather than marked executed.
+    assert "shopify" in _EXECUTORS
+    from app.config import settings
+    assert settings.SHOPIFY_WRITE_ENABLED is False
 
 
 async def test_a_write_the_workspace_hasnt_been_granted_is_refused(client):

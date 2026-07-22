@@ -10,6 +10,10 @@ from fastapi import APIRouter, Depends, Query
 
 from app.auth.dependencies import CurrentUser
 from app.core import shopify_service
+# Importing this registers the Shopify write executor with capability_executors,
+# so an approved storefront change is routed to it (and refused there unless
+# writes are enabled and the scope is granted).
+from app.core import shopify_write_service  # noqa: F401
 from app.db.session import get_db
 from sqlalchemy.orm import Session
 
