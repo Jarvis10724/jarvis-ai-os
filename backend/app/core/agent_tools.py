@@ -20,7 +20,14 @@ from typing import Awaitable, Callable
 from sqlalchemy.orm import Session
 
 from app.ai_providers.base import ToolDefinition
-from app.core import business_data_service, calendar_service, drive_service, gmail_service, memory_service
+from app.core import (
+    brand_brain_service,
+    business_data_service,
+    calendar_service,
+    drive_service,
+    gmail_service,
+    memory_service,
+)
 from app.core.memory_scope import MEMORY_SCOPES
 from app.core.orchestrator import orchestrator
 from app.db.models.company import Company
@@ -380,6 +387,91 @@ for _plugin_name, _arg_key, _description in _PLUGIN_TOOLS:
     _tool = _make_plugin_tool(_plugin_name, _arg_key, _description)
     TOOL_REGISTRY[_tool.definition.name] = _tool
 
+# --- The live store (Brand Brain) -----------------------------------------
+# Read-only views of the workspace's real Shopify catalog. These exist so the
+# store can be operated by voice from a phone: the static prompt block only
+# carries a summary line per product, which can't answer "how much RARE EARTH
+# is left" or "what's in the POLISH collection". Nothing here writes to
+# Shopify — writes remain disabled and would go through the Approval Center.
+
+
+async def _store_catalog(current_user, db: Session, *, company_id: str, query: str = "") -> str:
+    _get_owned_company(company_id, current_user, db)
+    products = brand_brain_service.list_products(db, company_id, limit=200)
+    if not products:
+        return "This workspace has no synced store catalog yet. Sync the Brand Brain first."
+    needle = (query or "").strip().lower()
+    if needle:
+        products = [
+            p
+            for p in products
+            if needle in (p["title"] or "").lower()
+            or needle in (p["product_type"] or "").lower()
+            or any(needle in t.lower() for t in p["tags"])
+        ]
+        if not products:
+            return f"No products in the store match {query!r}."
+    lines = []
+    for p in products:
+        price = f"{p['price_min']:.2f}" if p["price_min"] is not None else "?"
+        inv = p["total_inventory"]
+        lines.append(
+            f"- {p['title']} | {price} {p['currency'] or ''} | status={p['status'] or 'n/a'} "
+            f"| inventory={inv if inv is not None else 'unknown'} | handle={p['handle']}"
+        )
+    return "Live store catalog (source of truth):\n" + "\n".join(lines)
+
+
+async def _store_product(current_user, db: Session, *, company_id: str, name: str) -> str:
+    _get_owned_company(company_id, current_user, db)
+    products = brand_brain_service.list_products(db, company_id, limit=200)
+    needle = name.strip().lower()
+    match = next((p for p in products if needle in (p["title"] or "").lower() or needle == (p["handle"] or "")), None)
+    if not match:
+        return f"No product named {name!r} in this store. Use store_catalog to see what exists."
+    parts = [
+        f"{match['title']} (handle={match['handle']}, status={match['status'] or 'n/a'})",
+        f"Price: {match['price_min']} - {match['price_max']} {match['currency'] or ''}",
+        f"Total inventory: {match['total_inventory']}",
+        f"Type: {match['product_type'] or 'n/a'} | Vendor: {match['vendor'] or 'n/a'}",
+        f"Tags: {', '.join(match['tags']) or 'none'}",
+    ]
+    if match.get("variants"):
+        parts.append("Variants:")
+        for v in match["variants"][:20]:
+            parts.append(
+                f"  - {v.get('title')} | sku={v.get('sku')} | price={v.get('price')} "
+                f"| inventory={v.get('inventoryQuantity')}"
+            )
+    if match.get("description"):
+        parts.append(f"Description: {match['description'][:600]}")
+    return "\n".join(parts)
+
+
+async def _store_collections(current_user, db: Session, *, company_id: str) -> str:
+    _get_owned_company(company_id, current_user, db)
+    collections = brand_brain_service.list_collections(db, company_id)
+    if not collections:
+        return "No collections synced for this store yet."
+    return "Store collections:\n" + "\n".join(
+        f"- {c['title']} (handle={c['handle']}, {c['products_count']} products)" for c in collections
+    )
+
+
+async def _sync_store(current_user, db: Session, *, company_id: str) -> str:
+    """Pull the latest catalog from Shopify. Read-only: this imports FROM the
+    store, it never changes it."""
+    _get_owned_company(company_id, current_user, db)
+    try:
+        result = await brand_brain_service.sync_from_shopify(db, owner_id=current_user.id, company_id=company_id)
+    except Exception as exc:  # noqa: BLE001
+        return f"Couldn't reach Shopify: {exc}"
+    return (
+        f"Synced {result['store_name']}: {result['product_count']} products, "
+        f"{result['collection_count']} collections (read-only)."
+    )
+
+
 TOOL_REGISTRY["list_companies"] = AgentTool(
     definition=ToolDefinition(
         name="list_companies",
@@ -400,6 +492,75 @@ TOOL_REGISTRY["list_products"] = AgentTool(
         },
     ),
     handler=_list_products,
+)
+
+# Read-only store tools — the phone's window into the real catalog.
+TOOL_REGISTRY["store_catalog"] = AgentTool(
+    definition=ToolDefinition(
+        name="store_catalog",
+        description=(
+            "The workspace's REAL store catalog from Shopify (source of truth): every product with "
+            "price, status, and inventory. Use this for any question about what the store sells, "
+            "stock levels, or pricing. Optional `query` filters by name, type, or tag."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "company_id": {"type": "string", "description": "The workspace's company id."},
+                "query": {"type": "string", "description": "Optional filter, e.g. 'polish' or 'serum'."},
+            },
+            "required": ["company_id"],
+        },
+    ),
+    handler=_store_catalog,
+)
+
+TOOL_REGISTRY["store_product"] = AgentTool(
+    definition=ToolDefinition(
+        name="store_product",
+        description=(
+            "Full detail for ONE real store product: variants, per-variant SKU/price/inventory, tags, "
+            "and description. Use when asked about a specific product."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "company_id": {"type": "string", "description": "The workspace's company id."},
+                "name": {"type": "string", "description": "Product name or handle, e.g. 'RARE EARTH'."},
+            },
+            "required": ["company_id", "name"],
+        },
+    ),
+    handler=_store_product,
+)
+
+TOOL_REGISTRY["store_collections"] = AgentTool(
+    definition=ToolDefinition(
+        name="store_collections",
+        description="The store's real collections and how many products each contains.",
+        input_schema={
+            "type": "object",
+            "properties": {"company_id": {"type": "string", "description": "The workspace's company id."}},
+            "required": ["company_id"],
+        },
+    ),
+    handler=_store_collections,
+)
+
+TOOL_REGISTRY["sync_store"] = AgentTool(
+    definition=ToolDefinition(
+        name="sync_store",
+        description=(
+            "Re-import the latest catalog from Shopify into the Brand Brain. Read-only — it pulls FROM "
+            "the store and never changes it. Use when the user says the catalog looks stale."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"company_id": {"type": "string", "description": "The workspace's company id."}},
+            "required": ["company_id"],
+        },
+    ),
+    handler=_sync_store,
 )
 
 TOOL_REGISTRY["create_project"] = AgentTool(

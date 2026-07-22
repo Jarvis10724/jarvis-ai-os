@@ -88,6 +88,12 @@ _COMPANY_SCOPED_TOOLS = {
     "read_drive_document",
     "propose_update_product",
     "propose_update_company_section",
+    # Store tools: the active workspace decides WHICH store, so they must be
+    # scoped like every other company-scoped tool — never left to the model.
+    "store_catalog",
+    "store_product",
+    "store_collections",
+    "sync_store",
 }
 
 
