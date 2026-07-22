@@ -807,6 +807,34 @@ export interface CommandDecision {
   clarifying_question: string | null;
 }
 
+// Workspace Intelligence (Phase 3) — the AI's reading of a workspace, plus the
+// real signals it was built from (so the reading is auditable, not a black box).
+export interface WorkspaceSignals {
+  workspace: { name: string; type: string | null; industry: string | null; parent: string | null };
+  projects: { total: number; active: number; names: string[] };
+  tasks: { total: number; by_status: Record<string, number> };
+  pending_approvals: { capability: string; action: string; details: string }[];
+  recent_ai_work: { objective: string; status: string }[];
+  memory: { count: number; recent: { title: string; kind: string }[] };
+  brand_brain: { connected: boolean; products: number; collections: number; last_synced: string | null };
+}
+export interface WorkspaceRecommendation {
+  title: string;
+  why: string;
+  real_world: boolean;
+}
+export interface WorkspaceIntelligence {
+  company_id: string;
+  workspace_name: string;
+  headline: string;
+  state_of_play: string;
+  signals: { label: string; detail: string }[];
+  risks: { title: string; detail: string }[];
+  recommendations: WorkspaceRecommendation[];
+  evidence: WorkspaceSignals;
+  generated_at: number;
+}
+
 export interface BrandBrainSyncResult {
   synced_at: string;
   store_name: string | null;

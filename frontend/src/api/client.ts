@@ -42,6 +42,7 @@ import type {
   BrandBrainSyncResult,
   CommandDecision,
   WorkRun,
+  WorkspaceIntelligence,
   WorkspaceArtifact,
   WorkspaceConfig,
   WorkspaceDetail,
@@ -416,6 +417,12 @@ export const api = {
   getWorkRun: (id: string) => apiRequest<WorkRun>(`/work-queue/${id}`),
   listWorkRuns: (companyId?: string) =>
     apiRequest<WorkRun[]>(`/work-queue${companyId ? `?company_id=${encodeURIComponent(companyId)}` : ""}`),
+
+  // Workspace Intelligence — the AI's reading of a workspace + its evidence.
+  getWorkspaceIntelligence: (companyId: string, refresh = false) =>
+    apiRequest<WorkspaceIntelligence>(
+      `/workspace-intelligence?company_id=${encodeURIComponent(companyId)}${refresh ? "&refresh=true" : ""}`
+    ),
 
   // AI Command Center — decide which subsystem should handle a request, so
   // "Ask Jarvis" routes itself instead of making the user pick a tool.

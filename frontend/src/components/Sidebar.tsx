@@ -53,6 +53,7 @@ export const GLOBAL_ITEMS: NavEntry[] = [
 export const WORKSPACE_ITEMS: NavEntry[] = [
   { to: "/company/executive", label: "Executive Dashboard", icon: Gauge, capability: "operations" },
   { to: "/company/work-queue", label: "Work Queue", icon: ListChecks, capability: "operations" },
+  { to: "/company/intelligence", label: "Workspace Intelligence", icon: BrainCircuit, capability: "operations" },
   { to: "/company/brand-brain", label: "Brand Brain", icon: Boxes, capability: "commerce" },
   { to: "/company/dashboard", label: "Company Dashboard", icon: LayoutDashboard, capability: "operations" },
   { to: "/company/projects", label: "Project Manager", icon: Rocket, capability: "operations" },

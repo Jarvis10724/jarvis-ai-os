@@ -49,8 +49,12 @@ DESTINATIONS: dict[str, dict] = {
     "calendar": {"mode": "chat", "target": None, "label": "Calendar", "status": "Scheduling…",
                  "when": "schedule, move, or check meetings and events"},
     "brand_brain": {"mode": "navigate", "target": "/company/brand-brain", "label": "Brand Brain", "status": "Analyzing…",
-                    "when": "SEE the brand/product catalog itself — a full brand or workspace analysis, "
-                            "or browsing products (not a question that can simply be answered)"},
+                    "when": "SEE the brand/product catalog itself — browsing products, pricing, or the "
+                            "store's own data (not a question that can simply be answered)"},
+    "workspace_intelligence": {"mode": "navigate", "target": "/company/intelligence",
+                               "label": "Workspace Intelligence", "status": "Analyzing…",
+                               "when": "analyze a whole workspace/company — how it's doing, what's at risk, "
+                                       "what needs attention, what to do next"},
     "executive_dashboard": {"mode": "navigate", "target": "/company/executive", "label": "Executive Dashboard",
                             "status": "Loading…",
                             "when": "SEE today's priorities, the workspace overview, status, or health"},

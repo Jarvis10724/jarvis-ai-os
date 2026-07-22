@@ -131,7 +131,7 @@ export default function WorkQueuePage() {
   const done = run && (run.status === "completed" || run.status === "waiting");
 
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <main className="h-full min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <ModulePageHeader
         icon={ListChecks}
         title="Work Queue"
