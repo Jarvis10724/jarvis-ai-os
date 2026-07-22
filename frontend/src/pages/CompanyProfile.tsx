@@ -188,14 +188,18 @@ export default function CompanyProfile() {
   const company = activeCompany;
   const section = company.sections[activeTab];
 
+  // One scroll container for the whole workspace page: this <main>. Nothing
+  // inside it may cap its own height on a phone, or the page stops scrolling
+  // before the content ends. The extra bottom padding clears Safari's bottom
+  // bar and the home indicator so the last card is fully readable.
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <main className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pb-[max(6rem,calc(env(safe-area-inset-bottom)+5rem))] md:pb-4">
       {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          className="hud-panel hud-corner flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"
+          className="hud-panel hud-corner flex shrink-0 flex-col gap-4 p-6 md:shrink sm:flex-row sm:items-center sm:justify-between"
         >
           <div className="flex items-center gap-4">
             <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-jarvis-cyan/40 bg-jarvis-cyan/10 shadow-glow-sm">
@@ -237,7 +241,7 @@ export default function CompanyProfile() {
 
         {/* Stacks on a phone — a fixed side rail leaves the panel too narrow to
             operate at 375px — and returns to a side rail from md up. */}
-        <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+        <div className="flex shrink-0 flex-col gap-4 md:min-h-0 md:flex-1 md:shrink md:flex-row">
           {/* Phone: the collapsed rail is a single bar naming the section
               you're in. One tap reopens the full list; the section and the
               panel underneath are untouched, so nothing is lost by closing it. */}
@@ -323,7 +327,7 @@ export default function CompanyProfile() {
           </nav>
 
           {/* Content */}
-          <div className="hud-panel hud-corner p-3 md:min-h-0 md:flex-1 md:overflow-hidden sm:p-6">
+          <div className="hud-panel hud-corner overflow-visible p-3 md:min-h-0 md:flex-1 md:overflow-hidden sm:p-6">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}
@@ -331,14 +335,14 @@ export default function CompanyProfile() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                className="h-full"
+                className="md:h-full"
               >
                 {activeTab === "products" && (
                   <LaunchDashboard companyId={company.id} products={products} onChange={setProducts} />
                 )}
 
                 {activeTab === "security" && (
-                  <div className="flex h-full flex-col gap-4 overflow-y-auto">
+                  <div className="flex flex-col gap-4 md:h-full md:overflow-y-auto">
                     <div>
                       <h2 className="font-display text-sm font-semibold tracking-widest text-jarvis-text">
                         SECURITY
@@ -360,7 +364,7 @@ export default function CompanyProfile() {
                 {!CUSTOM_TABS.has(activeTab) && (
                   <div
                     className={clsx(
-                      "flex h-full flex-col gap-4",
+                      "flex flex-col gap-4 md:h-full",
                       activeTab === "shopify" && "overflow-y-auto"
                     )}
                   >
