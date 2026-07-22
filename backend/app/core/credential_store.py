@@ -67,20 +67,18 @@ def load_credentials(db: Session, *, owner_id: str, company_id: str | None, prov
     """Returns decrypted {"access_token", "refresh_token", **extra}, or
     None if nothing's connected for this (owner, company, provider).
 
-    Falls back to the account-wide connection (company_id=None) when a
-    company-specific one doesn't exist. Most setups have exactly one
-    external account (one Gmail/Calendar/Drive login) shared across every
-    company workspace — requiring a separate OAuth connection per company
-    would mean reconnecting the same account N times for no reason. A
-    company-specific connection, if one is ever made, always takes
-    priority and is never affected by this fallback (see _find/
-    save_credentials — it's a distinct row, looked up first). This also
-    means the fallback never leaks a DIFFERENT company's credential:
-    `owner_id` is filtered throughout, and the only thing ever fallen back
-    to is this same user's own account-wide row, if any."""
+    STRICTLY per workspace: a company workspace uses its OWN connection or
+    none at all. There is deliberately no fallback to the account-wide row.
+
+    An earlier version did fall back, on the assumption that one person has
+    one mailbox shared across their workspaces. That assumption breaks the
+    moment one account runs genuinely separate businesses: the fallback would
+    quietly serve one business's mailbox inside another business's workspace —
+    the operator sees the wrong company's email, and Jarvis reasons about it as
+    if it belonged there. Isolation matters more than the convenience of not
+    reconnecting, so an unconnected workspace now reports "not connected" and
+    asks for its own account instead of borrowing one."""
     cred = _find(db, owner_id, company_id, provider)
-    if cred is None and company_id is not None:
-        cred = _find(db, owner_id, None, provider)
     if cred is None:
         return None
     extra = json.loads(cred.extra_json) if cred.extra_json else {}

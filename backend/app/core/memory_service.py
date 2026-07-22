@@ -27,11 +27,15 @@ meeting to the contact who attended it.
 """
 import json
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.embeddings import cosine_similarity, embed_text, jaccard_similarity, tokenize
 from app.core.memory_scope import MEMORY_SCOPES, resolve_scope
+
+#: Scopes that belong to the person rather than to any one business, so they
+#: stay visible inside every workspace without leaking anything company-specific.
+WORKSPACE_NEUTRAL_SCOPES = ("global", "personal")
 from app.db.models.company import Company
 from app.db.models.memory import MEMORY_KINDS, MemoryAuditLog, MemoryEntry, MemoryLink
 from app.db.models.project import Project
@@ -304,9 +308,17 @@ async def search_memory(
     limit: int = 10,
 ) -> list[dict]:
     """`company_id`: "any" (default) searches everything the owner has —
-    global memory plus every company's. A real company id searches that
-    company's memory plus global memory (so personal facts still surface).
-    `None` explicitly searches only global memory.
+    global memory plus every company's. A real company id searches THAT
+    workspace's memory plus the memories that aren't about any business
+    (`global` and `personal` — who the user is, how they like to work), and
+    nothing else. `None` explicitly searches only the non-company memory.
+
+    Why `organization` is excluded from a workspace search: it's the bucket
+    for memory recorded with no workspace active, so nothing identifies which
+    business it came from. Folding it into a specific workspace is how one
+    business's facts end up in another's answers — the exact leak workspace
+    isolation exists to prevent. When one account runs genuinely separate
+    companies, un-attributed business memory belongs to neither of them.
 
     `scope`: an optional additional filter narrowing to exactly one of
     MEMORY_SCOPES (e.g. "personal" to exclude business memory from a
@@ -319,7 +331,15 @@ async def search_memory(
     elif company_id is None:
         q = q.filter(MemoryEntry.company_id.is_(None))
     else:
-        q = q.filter(or_(MemoryEntry.company_id == company_id, MemoryEntry.company_id.is_(None)))
+        q = q.filter(
+            or_(
+                MemoryEntry.company_id == company_id,
+                and_(
+                    MemoryEntry.company_id.is_(None),
+                    MemoryEntry.scope.in_(WORKSPACE_NEUTRAL_SCOPES),
+                ),
+            )
+        )
     if project_id:
         q = q.filter(MemoryEntry.project_id == project_id)
     if kind:
