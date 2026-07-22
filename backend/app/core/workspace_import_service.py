@@ -104,6 +104,9 @@ def is_relevant_email(sender: str | None, subject: str | None, snippet: str | No
     return True
 
 #: Mime fragments -> the kind of document, for the Documents index.
+#: Sections rendered from structured `data` rather than a notes blurb.
+STRUCTURED_SECTIONS = {"brand"}
+
 DOC_KINDS = {
     "pdf": "PDF",
     "spreadsheet": "Spreadsheet",
@@ -390,6 +393,11 @@ def _fill_empty_section_notes(db: Session, company: Company, sections: dict[str,
         entry = data.get(section) or {}
         if (entry.get("notes") or "").strip():
             continue  # manual content — never overwritten
+        # Sections that get structured cards don't get a notes placeholder —
+        # a sentence saying "5 items imported" is worse than the data itself,
+        # and it occupies the operator's own notes field.
+        if section in STRUCTURED_SECTIONS:
+            continue
         entry["notes"] = (
             f"{count} item{'' if count == 1 else 's'} imported from your connected sources. "
             "Search the workspace knowledge base to open any of them at the original."

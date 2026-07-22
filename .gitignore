@@ -35,3 +35,4 @@ data/uploads/*
 # Alembic
 backend/alembic/versions/*.py
 !backend/alembic/versions/.gitkeep
+data/asset_cache/

@@ -449,7 +449,7 @@ export default function CompanyProfile() {
                     {/* Structured knowledge the importer pulled out of this
                         workspace's own files — shown above the free-text
                         notes, which stay exactly as written. */}
-                    {activeTab === "brand" && <BrandProfile data={section?.data} />}
+                    {activeTab === "brand" && <BrandProfile companyId={company.id} data={section?.data} />}
 
                     <textarea
                       value={notesDraft}
@@ -495,89 +495,202 @@ export default function CompanyProfile() {
 }
 
 
-/** The extracted brand identity: only fields the sources actually stated. */
-function BrandProfile({ data }: { data?: Record<string, unknown> | null }) {
+
+/** A Drive-hosted image, fetched with the workspace's credentials.
+ *  Drive won't serve an <img src> without auth, so the bytes come through the
+ *  API and become a blob URL. If that fails the file is still identified by
+ *  name with a way to open it — never a broken image icon. */
+function DriveImage({
+  companyId,
+  fileId,
+  name,
+  link,
+}: {
+  companyId: string;
+  fileId?: string;
+  name?: string;
+  link?: string;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!fileId) return;
+    let url: string | null = null;
+    let cancelled = false;
+    api
+      .workspaceAssetUrl(companyId, fileId)
+      .then((objectUrl) => {
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        url = objectUrl;
+        setSrc(objectUrl);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [companyId, fileId]);
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-jarvis-border/60 bg-jarvis-panel2/40">
+        {src ? (
+          <img src={src} alt={name ?? "Logo"} className="h-full w-full object-contain" />
+        ) : failed ? (
+          <ImageIcon className="h-5 w-5 text-jarvis-faint" />
+        ) : (
+          <Loader2 className="h-4 w-4 animate-spin text-jarvis-muted" />
+        )}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-jarvis-text">{name ?? "Logo"}</p>
+        {link && (
+          <a
+            href={link}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] underline-offset-2 hover:underline"
+            style={{ color: "var(--ws-accent)" }}
+          >
+            Open in Drive →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BrandCard({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-jarvis-border/50 bg-jarvis-panel2/20 p-3">
+      <p className="mb-1 text-[10px] uppercase tracking-widest text-jarvis-faint">{label}</p>
+      <div className="text-sm text-jarvis-text">{children}</div>
+    </div>
+  );
+}
+
+/** The imported brand identity, as a business profile. Only fields the sources
+ *  actually stated are shown — an absent mission stays absent rather than
+ *  being invented or padded with placeholder copy. */
+function BrandProfile({
+  companyId,
+  data,
+}: {
+  companyId: string;
+  data?: Record<string, unknown> | null;
+}) {
   if (!data || Object.keys(data).length === 0) return null;
-  const get = <T,>(k: string): T | undefined => data[k] as T | undefined;
-  const brands = get<string[]>("brand_names") ?? [];
+  const get = <T,>(k: string): T | undefined => {
+    const v = data[k] as T | undefined;
+    return v === null ? undefined : v;
+  };
+  const brands = (get<string[]>("brand_names") ?? []).filter(Boolean);
   const colors = get<string[]>("colors") ?? [];
   const fonts = get<string[]>("fonts") ?? [];
   const social = get<string[]>("social_links") ?? [];
-  const logo = get<{ name?: string; link?: string }>("logo");
+  const logo = get<{ name?: string; id?: string; link?: string }>("logo");
   const website = get<string>("website");
-  const rows: [string, string | undefined][] = [
-    ["Company", get<string>("company_name")],
-    ["Brand", brands.join(" · ") || undefined],
-    ["Website", website],
-    ["Contact", get<string>("contact_email")],
-    ["Tagline", get<string>("tagline")],
-    ["Mission", get<string>("mission")],
-    ["Voice", get<string>("voice")],
-  ];
+  const email = get<string>("contact_email");
+  const sources = get<{ source?: string; detail?: string }[]>("sources") ?? [];
+  const story = get<string>("brand_story");
+  const values = get<string[]>("values") ?? [];
 
   return (
-    <section className="rounded-xl border border-jarvis-border/50 bg-jarvis-panel2/20 p-3">
-      <p className="mb-2 text-[10px] uppercase tracking-widest text-jarvis-faint">
-        Extracted from your connected sources
-      </p>
+    <section className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <BrandCard label="Company">{get<string>("company_name") ?? "—"}</BrandCard>
+        <BrandCard label="Brand">{brands.length ? brands.join(" · ") : "—"}</BrandCard>
 
-      {logo?.link && (
-        <a
-          href={logo.link}
-          target="_blank"
-          rel="noreferrer"
-          className="mb-2 flex items-center gap-2 text-xs font-medium"
-          style={{ color: "var(--ws-accent)" }}
-        >
-          <ImageIcon className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{logo.name ?? "Logo"}</span>
-        </a>
-      )}
-
-      <dl className="space-y-1.5">
-        {rows.map(([label, value]) =>
-          value ? (
-            <div key={label} className="flex gap-2 text-xs">
-              <dt className="w-20 shrink-0 uppercase tracking-wide text-jarvis-faint">{label}</dt>
-              <dd className="min-w-0 flex-1 break-words text-jarvis-muted">
-                {label === "Website" ? (
-                  <a href={value} target="_blank" rel="noreferrer" style={{ color: "var(--ws-accent)" }}>
-                    {value}
-                  </a>
-                ) : (
-                  value
-                )}
-              </dd>
-            </div>
-          ) : null
+        {logo?.id && (
+          <BrandCard label="Logo">
+            <DriveImage companyId={companyId} fileId={logo.id} name={logo.name} link={logo.link} />
+          </BrandCard>
         )}
-      </dl>
 
-      {colors.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {colors.slice(0, 12).map((c) => (
-            <span key={c} className="flex items-center gap-1 text-[10px] text-jarvis-muted">
-              <span
-                className="h-4 w-4 rounded border border-jarvis-border/60"
-                style={{ backgroundColor: c }}
-              />
-              {c}
-            </span>
-          ))}
+        {website && (
+          <BrandCard label="Website">
+            <a href={website} target="_blank" rel="noreferrer" className="break-all" style={{ color: "var(--ws-accent)" }}>
+              {website}
+            </a>
+          </BrandCard>
+        )}
+        {email && (
+          <BrandCard label="Contact">
+            <a href={`mailto:${email}`} className="break-all" style={{ color: "var(--ws-accent)" }}>
+              {email}
+            </a>
+          </BrandCard>
+        )}
+        {get<string>("currency") && <BrandCard label="Currency">{get<string>("currency")}</BrandCard>}
+
+        {fonts.length > 0 && (
+          <BrandCard label={`Fonts (${fonts.length})`}>
+            <ul className="space-y-0.5 text-xs text-jarvis-muted">
+              {fonts.slice(0, 6).map((f) => (
+                <li key={f} className="truncate">
+                  {f}
+                </li>
+              ))}
+              {fonts.length > 6 && <li className="text-jarvis-faint">+{fonts.length - 6} more</li>}
+            </ul>
+          </BrandCard>
+        )}
+
+        {colors.length > 0 && (
+          <BrandCard label="Colors">
+            <div className="flex flex-wrap gap-1.5">
+              {colors.slice(0, 12).map((c) => (
+                <span key={c} className="flex items-center gap-1 text-[10px] text-jarvis-muted">
+                  <span className="h-5 w-5 rounded border border-jarvis-border/60" style={{ backgroundColor: c }} />
+                  {c}
+                </span>
+              ))}
+            </div>
+          </BrandCard>
+        )}
+
+        {social.length > 0 && (
+          <BrandCard label="Social">
+            <ul className="space-y-0.5">
+              {social.map((u) => (
+                <li key={u}>
+                  <a href={u} target="_blank" rel="noreferrer" className="break-all text-xs" style={{ color: "var(--ws-accent)" }}>
+                    {u}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </BrandCard>
+        )}
+      </div>
+
+      {(get<string>("tagline") || get<string>("mission") || story || get<string>("voice") || values.length > 0) && (
+        <div className="grid grid-cols-1 gap-2">
+          {get<string>("tagline") && <BrandCard label="Tagline">{get<string>("tagline")}</BrandCard>}
+          {get<string>("mission") && <BrandCard label="Mission">{get<string>("mission")}</BrandCard>}
+          {story && <BrandCard label="Brand story">{story}</BrandCard>}
+          {get<string>("voice") && <BrandCard label="Voice">{get<string>("voice")}</BrandCard>}
+          {values.length > 0 && <BrandCard label="Values">{values.join(" · ")}</BrandCard>}
         </div>
       )}
 
-      {fonts.length > 0 && (
-        <p className="mt-2 text-[11px] text-jarvis-muted">
-          <span className="uppercase tracking-wide text-jarvis-faint">Fonts</span>{" "}
-          {fonts.slice(0, 8).join(", ")}
-          {fonts.length > 8 && ` +${fonts.length - 8} more`}
+      {/* What has NOT been found is stated, so a blank isn't mistaken for a
+          finished profile. */}
+      {!get<string>("tagline") && !get<string>("mission") && !story && (
+        <p className="px-1 text-[11px] text-jarvis-amber">
+          No tagline, mission or brand story found yet — the brand documents in Drive are PDFs/images,
+          which aren't text-extractable. Add them as Google Docs, or ask for PDF reading to be enabled.
         </p>
       )}
 
-      {social.length > 0 && (
-        <p className="mt-1 truncate text-[11px] text-jarvis-muted">
-          <span className="uppercase tracking-wide text-jarvis-faint">Social</span> {social.join(" · ")}
+      {sources.length > 0 && (
+        <p className="px-1 text-[10px] text-jarvis-faint">
+          Imported from {Array.from(new Set(sources.map((s) => s.source))).join(", ")} ·{" "}
+          {sources.length} source{sources.length === 1 ? "" : "s"}
         </p>
       )}
     </section>

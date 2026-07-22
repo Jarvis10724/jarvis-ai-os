@@ -428,6 +428,18 @@ export const api = {
       `/workspace-import/summary?company_id=${encodeURIComponent(companyId)}`
     ),
 
+  /** Fetches a Drive asset with the workspace's credentials and returns an
+   *  object URL the UI can put in an <img>. An <img src> can't carry an auth
+   *  header, so the bytes are fetched here and handed over as a blob. */
+  workspaceAssetUrl: async (companyId: string, fileId: string): Promise<string> => {
+    const resp = await fetch(
+      `${API_BASE}/workspace-import/asset?company_id=${encodeURIComponent(companyId)}&file_id=${encodeURIComponent(fileId)}`,
+      { headers: { Authorization: `Bearer ${getToken() ?? ""}` } }
+    );
+    if (!resp.ok) throw new ApiError(`Asset unavailable (${resp.status})`, resp.status);
+    return URL.createObjectURL(await resp.blob());
+  },
+
   extractSection: (companyId: string, section = "brand") =>
     apiRequest<{ section: string; supported: boolean; data?: Record<string, unknown>; message?: string }>(
       `/workspace-import/extract?company_id=${encodeURIComponent(companyId)}&section=${section}`,

@@ -7,17 +7,61 @@ stream progress as it goes (SSE, same frame shape as the Work Queue stream).
 Read-only against the outside world: it imports FROM Shopify, Gmail and Drive
 and never writes back to them.
 """
+import hashlib
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import CurrentUser
-from app.core import workspace_import_service
+from app.core import drive_service, workspace_import_service
 from app.db.session import SessionLocal, get_db
 
 router = APIRouter(prefix="/workspace-import", tags=["workspace-import"])
+
+#: Fetched Drive assets are cached on disk so opening the Brand page doesn't
+#: re-download the logo on every render (and doesn't spend a Drive API call).
+ASSET_CACHE = Path("data/asset_cache")
+
+
+@router.get("/asset")
+async def asset(
+    current_user: CurrentUser,
+    company_id: str = Query(...),
+    file_id: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """One Drive file's bytes, fetched with the WORKSPACE's own credentials so
+    an image stored in Drive can actually be shown in the app. Cached on disk
+    after the first fetch; scoped per company, so no workspace can read
+    another's files."""
+    ASSET_CACHE.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(f"{company_id}:{file_id}".encode()).hexdigest()
+    cached = ASSET_CACHE / key
+    meta_path = ASSET_CACHE / f"{key}.type"
+    if cached.exists() and meta_path.exists():
+        return Response(
+            content=cached.read_bytes(),
+            media_type=meta_path.read_text() or "application/octet-stream",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+
+    data = await drive_service.download_asset(
+        db, owner_id=current_user.id, company_id=company_id, file_id=file_id
+    )
+    content = data.get("content") or b""
+    media_type = data.get("mime_type") or "application/octet-stream"
+    try:
+        cached.write_bytes(content)
+        meta_path.write_text(media_type)
+    except OSError:  # a cache miss is survivable; failing the request isn't
+        pass
+    return Response(
+        content=content, media_type=media_type,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @router.post("/scan")

@@ -107,6 +107,18 @@ async def list_files(
     return result.data
 
 
+async def download_asset(db, *, owner_id: str, company_id: str | None, file_id: str) -> dict:
+    """The raw bytes of one Drive file, for rendering it in the app. Gated by
+    the same read permission as reading a document — it's the same read, just
+    of a file whose content happens to be binary."""
+    capability_service.authorize_direct_action(
+        db, owner_id=owner_id, capability_name=CAPABILITY_NAME, action_type="read_document", company_id=company_id
+    )
+    integration = _load_integration(db, owner_id=owner_id, company_id=company_id)
+    result = await _call(db, owner_id, company_id, integration, "download_file", file_id=file_id)
+    return result.data
+
+
 async def read_document(db, *, owner_id: str, company_id: str | None, file_id: str) -> dict:
     capability_service.authorize_direct_action(
         db, owner_id=owner_id, capability_name=CAPABILITY_NAME, action_type="read_document", company_id=company_id

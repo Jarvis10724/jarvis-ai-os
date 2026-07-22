@@ -197,6 +197,29 @@ class GoogleDriveIntegration(BaseIntegration):
         files = resp.json().get("files", [])
         return files[0]["id"] if files else None
 
+    async def download_file(self, file_id: str) -> IntegrationActionResult:
+        """Raw bytes for a binary file (an image, a PDF) plus its content type.
+
+        read_document deliberately refuses binaries — it decodes as text and
+        would return garbage. This is the counterpart for the cases where the
+        bytes themselves are the point, like rendering a logo.
+        """
+        meta_resp = await self._authed_request(
+            "GET", f"/files/{file_id}", params={"fields": "id,name,mimeType,size"}
+        )
+        meta = meta_resp.json()
+        content_resp = await self._authed_request("GET", f"/files/{file_id}", params={"alt": "media"})
+        return IntegrationActionResult(
+            success=True,
+            data={
+                "id": file_id,
+                "name": meta.get("name"),
+                "mime_type": meta.get("mimeType"),
+                "content": content_resp.content,
+            },
+            message="Downloaded file.",
+        )
+
     async def read_document(self, file_id: str) -> IntegrationActionResult:
         """Reads a file's text content. Google Docs/Sheets/Slides have no
         raw bytes of their own, so those are exported as plain text/CSV
