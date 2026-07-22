@@ -18,6 +18,7 @@ import {
   Sparkles,
   Store,
   UserCircle2,
+  X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
@@ -94,11 +95,69 @@ export default function CompanyProfile() {
     return () => mq.removeEventListener("change", sync);
   }, []);
 
+  /** The section buttons — one definition, rendered by the desktop rail and
+   *  the phone drawer alike so the two can never drift apart. */
+  function renderSections({ compact }: { compact: boolean }) {
+    return SECTION_TABS.map(({ key, label, icon: Icon }, i) => {
+      const tabStatus = !CUSTOM_TABS.has(key) ? company.sections[key]?.status : null;
+      const isActive = activeTab === key;
+      return (
+        <motion.button
+          key={key}
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.02 * i, duration: 0.25 }}
+          onClick={() => selectTab(key)}
+          aria-label={label}
+          aria-current={isActive ? "page" : undefined}
+          title={label}
+          className={clsx(
+            "group relative flex items-center gap-2.5 rounded-lg py-2.5 text-left text-sm font-medium transition-all duration-200",
+            compact ? "justify-center px-2.5" : "px-3.5",
+            isActive
+              ? "bg-jarvis-cyan/10 text-jarvis-cyan"
+              : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+          )}
+        >
+          <span
+            className={clsx(
+              "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-jarvis-cyan transition-opacity duration-200",
+              isActive ? "opacity-100" : "opacity-0"
+            )}
+          />
+          <Icon className="h-4 w-4 shrink-0" />
+          {!compact && <span className="flex-1 truncate">{label}</span>}
+          {tabStatus && (
+            <span
+              className={clsx(
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                compact && "absolute right-1.5 top-1.5",
+                tabStatus === "done" || tabStatus === "in_progress"
+                  ? "bg-jarvis-emerald"
+                  : tabStatus === "needs_rebuild"
+                    ? "bg-jarvis-rose"
+                    : "bg-jarvis-muted"
+              )}
+            />
+          )}
+        </motion.button>
+      );
+    });
+  }
+
   const activeSection = SECTION_TABS.find((t) => t.key === activeTab);
   const activeLabel = activeSection?.label ?? "Sections";
   const ActiveIcon = activeSection?.icon;
 
-  /** Picking a section never loses it — only the menu closes, and only on a phone. */
+  // Esc closes the drawer, the way any sheet should.
+  useEffect(() => {
+    if (!navOpen || isDesktop) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setNavOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen, isDesktop]);
+
+  /** Picking a section never loses it — only the drawer closes, and only on a phone. */
   function selectTab(key: string) {
     setActiveTab(key);
     if (!isDesktop) setNavOpen(false);
@@ -242,35 +301,31 @@ export default function CompanyProfile() {
         {/* Stacks on a phone — a fixed side rail leaves the panel too narrow to
             operate at 375px — and returns to a side rail from md up. */}
         <div className="flex shrink-0 flex-col gap-4 md:min-h-0 md:flex-1 md:shrink md:flex-row">
-          {/* Phone: the collapsed rail is a single bar naming the section
-              you're in. One tap reopens the full list; the section and the
-              panel underneath are untouched, so nothing is lost by closing it. */}
-          {!navOpen && (
-            <button
-              onClick={() => setNavOpen(true)}
-              aria-expanded={false}
-              aria-label={`Workspace sections — currently ${activeLabel}`}
-              className="hud-panel press-scale flex shrink-0 items-center gap-2 px-3 py-2.5 text-left md:hidden"
-            >
-              <Menu className="h-4 w-4 shrink-0 text-jarvis-muted" />
-              {ActiveIcon && <ActiveIcon className="h-4 w-4 shrink-0 text-jarvis-cyan" />}
-              <span className="flex-1 truncate text-sm font-medium text-jarvis-cyan">{activeLabel}</span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-jarvis-faint" />
-            </button>
-          )}
+          {/* Phone: a persistent bar naming the section you're in, and the
+              way into the drawer. It stays put while the drawer floats over
+              the content, so nothing below it moves. */}
+          <button
+            onClick={() => setNavOpen(true)}
+            aria-expanded={navOpen}
+            aria-haspopup="dialog"
+            aria-label={`Workspace sections — currently ${activeLabel}`}
+            className="hud-panel press-scale flex shrink-0 items-center gap-2 px-3 py-2.5 text-left md:hidden"
+          >
+            <Menu className="h-4 w-4 shrink-0 text-jarvis-muted" />
+            {ActiveIcon && <ActiveIcon className="h-4 w-4 shrink-0 text-jarvis-cyan" />}
+            <span className="flex-1 truncate text-sm font-medium text-jarvis-cyan">{activeLabel}</span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-jarvis-faint" />
+          </button>
 
-          {/* Tabs */}
+          {/* Desktop rail — unchanged: an expanded sidebar, or a narrow icon
+              rail when deliberately collapsed. Never shown on a phone. */}
           <nav
             className={clsx(
-              "hud-panel shrink-0 gap-0.5 md:flex md:flex-col md:overflow-y-auto md:p-3",
-              navOpen ? "flex flex-col p-2" : "hidden",
-              // Collapsed on desktop is a narrow icon rail, not a hidden menu —
-              // the sections stay one tap away on a screen that has room.
+              "hud-panel hidden shrink-0 gap-0.5 md:flex md:flex-col md:overflow-y-auto md:p-3",
               navOpen ? "md:w-56" : "md:w-14 md:items-center"
             )}
           >
-            {/* Desktop-only collapse control: the rail never closes on its own
-                here, only when it's deliberately collapsed. */}
+            {/* The rail never closes on its own here, only when collapsed. */}
             <button
               onClick={() => setNavOpen((v) => !v)}
               aria-label={navOpen ? "Collapse sections" : "Expand sections"}
@@ -279,52 +334,54 @@ export default function CompanyProfile() {
             >
               {navOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
-
-            {SECTION_TABS.map(({ key, label, icon: Icon }, i) => {
-              const tabStatus = !CUSTOM_TABS.has(key) ? company.sections[key]?.status : null;
-              const isActive = activeTab === key;
-              return (
-                <motion.button
-                  key={key}
-                  initial={{ opacity: 0, x: -6 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.02 * i, duration: 0.25 }}
-                  onClick={() => selectTab(key)}
-                  aria-label={label}
-                  title={label}
-                  className={clsx(
-                    "group relative flex items-center gap-2.5 rounded-lg py-2.5 text-left text-sm font-medium transition-all duration-200",
-                    navOpen ? "px-3.5" : "px-2.5 md:justify-center",
-                    isActive
-                      ? "bg-jarvis-cyan/10 text-jarvis-cyan"
-                      : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
-                  )}
-                >
-                  <span
-                    className={clsx(
-                      "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-jarvis-cyan transition-opacity duration-200",
-                      isActive ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className={clsx("flex-1 truncate", !navOpen && "md:hidden")}>{label}</span>
-                  {tabStatus && (
-                    <span
-                      className={clsx(
-                        "h-1.5 w-1.5 shrink-0 rounded-full",
-                        !navOpen && "md:absolute md:right-1.5 md:top-1.5",
-                        tabStatus === "done" || tabStatus === "in_progress"
-                          ? "bg-jarvis-emerald"
-                          : tabStatus === "needs_rebuild"
-                            ? "bg-jarvis-rose"
-                            : "bg-jarvis-muted"
-                      )}
-                    />
-                  )}
-                </motion.button>
-              );
-            })}
+            {renderSections({ compact: !navOpen })}
           </nav>
+
+          {/* Phone drawer — slides OVER the content. Because it's fixed, the
+              page underneath never reflows: scroll position and the active
+              section are exactly as they were when it opened. */}
+          <AnimatePresence>
+            {navOpen && !isDesktop && (
+              <>
+                <motion.div
+                  key="scrim"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={() => setNavOpen(false)}
+                  className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm md:hidden"
+                />
+                <motion.div
+                  key="drawer"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Workspace sections"
+                  initial={{ x: "-100%" }}
+                  animate={{ x: 0 }}
+                  exit={{ x: "-100%" }}
+                  transition={{ type: "spring", stiffness: 420, damping: 40 }}
+                  className="fixed inset-y-0 left-0 z-[71] flex w-[84%] max-w-xs flex-col border-r border-jarvis-border/70 bg-jarvis-panel/95 backdrop-blur-2xl pt-safe md:hidden"
+                >
+                  <div className="flex items-center gap-2 border-b border-jarvis-border/50 px-4 py-3">
+                    <p className="min-w-0 flex-1 truncate font-display text-sm font-semibold tracking-wide text-jarvis-text">
+                      {company.name}
+                    </p>
+                    <button
+                      onClick={() => setNavOpen(false)}
+                      aria-label="Close sections"
+                      className="press-scale rounded-lg p-2 text-jarvis-muted transition hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2 pb-safe">
+                    {renderSections({ compact: false })}
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
 
           {/* Content */}
           <div className="hud-panel hud-corner overflow-visible p-3 md:min-h-0 md:flex-1 md:overflow-hidden sm:p-6">
