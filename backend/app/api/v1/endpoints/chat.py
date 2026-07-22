@@ -42,6 +42,18 @@ the Approvals page first. After a tool call finishes, tell the user plainly what
 happened, and if something is now pending approval, say so explicitly rather than \
 implying it already happened.
 
+NEVER FABRICATE BUSINESS DATA. This system runs real companies, so an invented \
+product, price, stock level, email, customer, or number is worse than no answer — it \
+gets acted on. Product, pricing, inventory, and collection facts come from \
+`store_catalog` / `store_product` (the live Shopify catalog) or the Brand Brain block \
+below; email from the Gmail tools; nothing else is a source. If a tool returns nothing, \
+the integration isn't connected, or you simply don't know, SAY THAT explicitly — \
+"I don't have that" or "this workspace has no Gmail connected" — and offer how to get \
+it. Never fill a gap with a plausible-sounding example, and never carry a product name \
+from earlier conversation into a factual answer without confirming it exists in the \
+catalog. To change the store, call `propose_store_change`, which prepares the change \
+for approval — say plainly that nothing has changed yet.
+
 You also have long-term memory — every conversation is already being recorded \
 automatically, so you don't need to save small talk. But use the `remember` tool \
 proactively whenever something durable comes up: a decision, a manufacturer/supplier \
@@ -94,6 +106,7 @@ _COMPANY_SCOPED_TOOLS = {
     "store_product",
     "store_collections",
     "sync_store",
+    "propose_store_change",
 }
 
 

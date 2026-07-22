@@ -138,6 +138,20 @@ CAPABILITIES: dict[str, CapabilityDefinition] = {
             # ApprovalRequest, and no executor is registered for them.
             ActionDefinition("refund_order", "Refund an order", requires_approval=True),
             ActionDefinition("fulfill_order", "Mark an order fulfilled", requires_approval=True),
+            # Storefront writes. Jarvis PREPARES these — each one becomes an
+            # ApprovalRequest carrying exactly what would change. None of them
+            # has a registered executor, so approving records consent and
+            # nothing reaches the live store until an executor is deliberately
+            # enabled. Nothing here can publish on its own.
+            ActionDefinition("update_inventory", "Change a product's stock level", requires_approval=True),
+            ActionDefinition("update_price", "Change a product's price", requires_approval=True),
+            ActionDefinition("update_product", "Edit a product's title/description/status", requires_approval=True),
+            ActionDefinition("update_seo", "Change a product's SEO title/description", requires_approval=True),
+            ActionDefinition("update_images", "Add/replace/reorder product images", requires_approval=True),
+            ActionDefinition("create_draft_product", "Create a new product as an unpublished draft", requires_approval=True),
+            ActionDefinition("create_collection", "Create a collection", requires_approval=True),
+            ActionDefinition("create_discount", "Create a discount / price rule", requires_approval=True),
+            ActionDefinition("publish_product", "Make a draft product live on the storefront", requires_approval=True),
         ],
     ),
     "amazon": CapabilityDefinition(

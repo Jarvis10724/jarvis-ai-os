@@ -169,6 +169,124 @@ def _fulfill(p: dict) -> dict:
     }
 
 
+# --- Shopify storefront writes ---------------------------------------------
+# Jarvis PREPARES these from the phone; none of them has an executor, so
+# approving records the decision and nothing reaches the live store until an
+# executor is deliberately enabled. The briefs say so plainly rather than
+# implying the change is about to go live.
+
+_NOT_LIVE = (
+    "Approving records your decision. Nothing is pushed to Shopify — storefront writes "
+    "are not enabled, so this will not change the live store by itself."
+)
+
+
+def _target(p: dict) -> str:
+    return p.get("product") or p.get("title") or p.get("handle") or "the store"
+
+
+@_register("shopify", "update_inventory")
+def _shopify_inventory(p: dict) -> dict:
+    return {
+        "summary": f"Set stock for {_target(p)} to {p.get('quantity', '?')}",
+        "expected_outcome": f"The recorded stock level for {_target(p)} becomes {p.get('quantity', '?')}. " + _NOT_LIVE,
+        "risks": [
+            "Stock drives what customers can buy — too high oversells, too low hides a product.",
+        ],
+        "undo_plan": "Reversible: set the previous quantity back. The prior value is in the audit trail.",
+    }
+
+
+@_register("shopify", "update_price")
+def _shopify_price(p: dict) -> dict:
+    return {
+        "summary": f"Change the price of {_target(p)} to {p.get('price', '?')}",
+        "expected_outcome": f"{_target(p)} would be priced at {p.get('price', '?')}. " + _NOT_LIVE,
+        "risks": [
+            "Price is customer-facing and affects margin on every subsequent order.",
+            "Shoppers who saw the old price may notice the change.",
+        ],
+        "undo_plan": "Reversible: restore the previous price from the audit trail.",
+    }
+
+
+@_register("shopify", "update_product")
+def _shopify_product(p: dict) -> dict:
+    fields = [k for k in p if k not in ("product", "handle", "product_id")]
+    return {
+        "summary": f"Edit {', '.join(fields) if fields else 'fields'} on {_target(p)}",
+        "expected_outcome": f"The listed fields on {_target(p)} would change. " + _NOT_LIVE,
+        "risks": ["Product copy and status are customer-facing."],
+        "undo_plan": "Reversible: the previous values are kept in the audit trail.",
+    }
+
+
+@_register("shopify", "update_seo")
+def _shopify_seo(p: dict) -> dict:
+    return {
+        "summary": f"Update SEO title/description for {_target(p)}",
+        "expected_outcome": f"Search-engine title and description for {_target(p)} would change. " + _NOT_LIVE,
+        "risks": ["Search rankings can move after an SEO change, in either direction."],
+        "undo_plan": "Reversible: restore the previous SEO text.",
+    }
+
+
+@_register("shopify", "update_images")
+def _shopify_images(p: dict) -> dict:
+    return {
+        "summary": f"Change product images for {_target(p)}",
+        "expected_outcome": f"The image set for {_target(p)} would change. " + _NOT_LIVE,
+        "risks": ["Images are the first thing a customer judges the product on."],
+        "undo_plan": "Reversible while the original image files still exist.",
+    }
+
+
+@_register("shopify", "create_draft_product")
+def _shopify_draft(p: dict) -> dict:
+    return {
+        "summary": f"Create “{p.get('title', 'a new product')}” as an UNPUBLISHED draft",
+        "expected_outcome": "A draft product would be created. Drafts are not visible to customers. " + _NOT_LIVE,
+        "risks": ["None to customers while it stays a draft — publishing is a separate approval."],
+        "undo_plan": "Reversible: delete the draft.",
+    }
+
+
+@_register("shopify", "publish_product")
+def _shopify_publish(p: dict) -> dict:
+    return {
+        "summary": f"PUBLISH {_target(p)} to the live storefront",
+        "expected_outcome": f"{_target(p)} would become visible and purchasable by customers. " + _NOT_LIVE,
+        "risks": [
+            "This is the step that makes something public.",
+            "Publishing with wrong pricing or stock is immediately visible to customers.",
+        ],
+        "undo_plan": "Reversible: unpublish it — though anyone who saw it in the meantime already did.",
+    }
+
+
+@_register("shopify", "create_collection")
+def _shopify_collection(p: dict) -> dict:
+    return {
+        "summary": f"Create the collection “{p.get('title', 'untitled')}”",
+        "expected_outcome": "A new collection would be created to group products. " + _NOT_LIVE,
+        "risks": ["Collections shape storefront navigation."],
+        "undo_plan": "Reversible: delete the collection.",
+    }
+
+
+@_register("shopify", "create_discount")
+def _shopify_discount(p: dict) -> dict:
+    return {
+        "summary": f"Create discount “{p.get('code', p.get('title', 'untitled'))}” ({p.get('value', '?')})",
+        "expected_outcome": "A discount customers could redeem would be created. " + _NOT_LIVE,
+        "risks": [
+            "Discounts cost real margin on every order that uses them.",
+            "A code that leaks can be shared publicly.",
+        ],
+        "undo_plan": "Reversible: deactivate the discount — but orders already placed with it stand.",
+    }
+
+
 # --- Jarvis's own planned work ---------------------------------------------
 
 

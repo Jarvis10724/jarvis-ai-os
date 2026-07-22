@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.ai_providers.base import ToolDefinition
 from app.core import (
     brand_brain_service,
+    capability_service,
     business_data_service,
     calendar_service,
     drive_service,
@@ -472,6 +473,55 @@ async def _sync_store(current_user, db: Session, *, company_id: str) -> str:
     )
 
 
+#: change_type -> the registered shopify capability action it proposes.
+_STORE_CHANGES = {
+    "inventory": "update_inventory",
+    "price": "update_price",
+    "product": "update_product",
+    "seo": "update_seo",
+    "images": "update_images",
+    "draft_product": "create_draft_product",
+    "publish": "publish_product",
+    "collection": "create_collection",
+    "discount": "create_discount",
+}
+
+
+async def _propose_store_change(
+    current_user, db: Session, *, company_id: str, change_type: str, changes: dict, reason: str = ""
+) -> str:
+    """Prepare a storefront change for approval. This NEVER touches Shopify:
+    it creates an ApprovalRequest describing exactly what would change, which
+    the operator reviews (and can edit) in the Approval Center. There is no
+    executor for these actions, so even approving one doesn't push it live."""
+    company = _get_owned_company(company_id, current_user, db)
+    action = _STORE_CHANGES.get(change_type)
+    if action is None:
+        return (
+            f"Unknown change type {change_type!r}. Supported: {', '.join(sorted(_STORE_CHANGES))}."
+        )
+    if not isinstance(changes, dict) or not changes:
+        return "Nothing to change — describe the specific fields and values."
+    try:
+        approval = capability_service.propose_action(
+            db,
+            owner_id=current_user.id,
+            capability_name="shopify",
+            action_type=action,
+            payload=changes,
+            company_id=company_id,
+            requested_by=current_user.id,
+            brief={"reason": reason or None},
+        )
+    except Exception as exc:  # noqa: BLE001 - report, never half-apply
+        return f"Couldn't prepare that change: {exc}"
+    return (
+        f"Prepared for your approval: {approval['summary']}\n"
+        f"Nothing has changed on the store. Review it in the Approval Center "
+        f"(workspace: {company.name}) — you can edit the values before approving."
+    )
+
+
 TOOL_REGISTRY["list_companies"] = AgentTool(
     definition=ToolDefinition(
         name="list_companies",
@@ -561,6 +611,42 @@ TOOL_REGISTRY["sync_store"] = AgentTool(
         },
     ),
     handler=_sync_store,
+)
+
+TOOL_REGISTRY["propose_store_change"] = AgentTool(
+    definition=ToolDefinition(
+        name="propose_store_change",
+        description=(
+            "PREPARE a Shopify storefront change for the operator to approve. Use this whenever the "
+            "user asks to change the store: stock levels, prices, product titles/descriptions/status, "
+            "SEO, images, a new draft product, publishing a draft, a collection, or a discount. "
+            "This never modifies Shopify — it creates an approval request the user reviews and can "
+            "edit first. Say plainly that it's waiting for their approval and nothing has changed yet. "
+            "Use the real product title from store_catalog; never invent a product."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "company_id": {"type": "string", "description": "The workspace's company id."},
+                "change_type": {
+                    "type": "string",
+                    "enum": sorted(_STORE_CHANGES),
+                    "description": "Which kind of storefront change to prepare.",
+                },
+                "changes": {
+                    "type": "object",
+                    "description": (
+                        "Exactly what would change, e.g. {'product': 'RARE EARTH | Mineral Polish', "
+                        "'quantity': 120} for inventory, or {'product': '...', 'price': '31.00'} for price, "
+                        "or {'title': '...', 'description': '...'} for a draft product."
+                    ),
+                },
+                "reason": {"type": "string", "description": "Why this change is being proposed."},
+            },
+            "required": ["company_id", "change_type", "changes"],
+        },
+    ),
+    handler=_propose_store_change,
 )
 
 TOOL_REGISTRY["create_project"] = AgentTool(

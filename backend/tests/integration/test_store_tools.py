@@ -178,3 +178,85 @@ def test_store_tools_are_registered_as_company_scoped(client):
     from app.api.v1.endpoints.chat import _COMPANY_SCOPED_TOOLS
 
     assert {"store_catalog", "store_product", "store_collections", "sync_store"} <= _COMPANY_SCOPED_TOOLS
+
+
+# --- Preparing storefront changes (approval-gated) -------------------------
+
+
+def _grant_shopify_writes(client, headers, company_id, actions):
+    return client.put(
+        f"{API}/capabilities/shopify/config",
+        json={"enabled": True, "permissions": actions, "company_id": company_id},
+        headers=headers,
+    )
+
+
+async def test_preparing_a_store_change_creates_an_approval_and_changes_nothing(client):
+    headers = _login(client, "store-write@example.com")
+    company = _company(client, headers)
+    _seed_store(company)
+    _grant_shopify_writes(client, headers, company, ["update_inventory"])
+
+    out = await _run(
+        "propose_store_change",
+        client,
+        headers,
+        company_id=company,
+        change_type="inventory",
+        changes={"product": "RARE EARTH | Mineral Polish", "quantity": 120},
+        reason="Restocking after the spring order landed.",
+    )
+    assert "your approval" in out.lower()
+    assert "nothing has changed" in out.lower()
+
+    queue = client.get(f"{API}/approvals/queue?company_id={company}", headers=headers).json()
+    step = queue["standalone"][0]
+    assert step["capability_name"] == "shopify" and step["action_type"] == "update_inventory"
+    assert step["status"] == "pending"
+    assert "120" in step["summary"]
+    assert "Restocking" in (step["reason"] or "")
+    # The brief must not imply the store is about to change.
+    assert "nothing is pushed to shopify" in step["expected_outcome"].lower()
+
+    # The catalog is untouched — the proposal is a request, not a write.
+    assert "inventory=42" in await _run("store_catalog", client, headers, company_id=company)
+
+
+async def test_every_storefront_change_type_is_approval_gated(client):
+    """No storefront write may bypass the gate, and none may execute itself."""
+    from app.core.capabilities_registry import get_capability
+    from app.core.capability_executors import _EXECUTORS
+    from app.core.agent_tools import _STORE_CHANGES
+
+    shopify = get_capability("shopify")
+    for action in _STORE_CHANGES.values():
+        assert shopify.action(action).requires_approval, f"{action} is not approval-gated"
+    # Nothing registered to auto-perform Shopify writes: approving records the
+    # decision, it never publishes by itself.
+    assert "shopify" not in _EXECUTORS
+
+
+async def test_a_write_the_workspace_hasnt_been_granted_is_refused(client):
+    headers = _login(client, "store-nogrant@example.com")
+    company = _company(client, headers)
+    _seed_store(company)
+    # No permission granted for update_price.
+    out = await _run(
+        "propose_store_change",
+        client,
+        headers,
+        company_id=company,
+        change_type="price",
+        changes={"product": "RARE EARTH | Mineral Polish", "price": "31.00"},
+    )
+    assert "couldn't prepare" in out.lower()
+    assert client.get(f"{API}/approvals/queue?company_id={company}", headers=headers).json()["pending_count"] == 0
+
+
+async def test_unknown_change_type_is_refused_not_guessed(client):
+    headers = _login(client, "store-badtype@example.com")
+    company = _company(client, headers)
+    out = await _run(
+        "propose_store_change", client, headers, company_id=company, change_type="teleport", changes={"x": 1}
+    )
+    assert "Unknown change type" in out
