@@ -36,7 +36,7 @@ Four tables:
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -48,6 +48,7 @@ CAPABILITY_AUDIT_ACTIONS = [
     "disabled",
     "permissions_changed",
     "proposed",
+    "edited",
     "approved",
     "rejected",
     "executed",
@@ -109,6 +110,28 @@ class ApprovalRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # "body": "..."} — whatever the capability's action needs to actually
     # run once approved.
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # --- The brief: what a human needs in order to decide -------------------
+    # Filled by app.core.approval_brief (deterministically, per action type) or
+    # overridden by the proposer. Nullable so every pre-existing row stays
+    # valid; the brief is rebuilt on read when these are empty.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: JSON list of plain-language risk strings.
+    risks_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: How to undo this if it turns out wrong — or an honest statement that it
+    #: can't be undone (an unsent email can't be recalled).
+    undo_plan: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Plan grouping: many approvals that belong to one execution plan ----
+    #: Ties this request to the plan it belongs to (a Work Queue run id), so a
+    #: whole plan can be approved at once and executed in order. Null for
+    #: standalone approvals.
+    group_id: Mapped[str | None] = mapped_column(String(), nullable=True, index=True)
+    group_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Position within the plan — execution order.
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     requested_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)

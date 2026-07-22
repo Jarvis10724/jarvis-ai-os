@@ -40,6 +40,9 @@ import type {
   BrandProduct,
   BrandCollection,
   BrandBrainSyncResult,
+  ApprovalQueue,
+  ApprovalDecisionResult,
+  PlanDecisionResult,
   CommandDecision,
   WorkRun,
   WorkspaceIntelligence,
@@ -588,10 +591,30 @@ export const api = {
     if (params.status) qs.set("status", params.status);
     return apiRequest<ApprovalRequestView[]>(`/approvals?${qs.toString()}`);
   },
-  approveRequest: (id: string, note?: string) =>
-    apiRequest<ApprovalRequestView>(`/approvals/${id}/approve`, { method: "POST", body: { note } }),
+  // Approval Center — one queue for every real-world action. `payload` on
+  // approve means "edit then approve" as a single reviewed decision.
+  approveRequest: (id: string, note?: string, payload?: Record<string, unknown>) =>
+    apiRequest<ApprovalDecisionResult>(`/approvals/${id}/approve`, {
+      method: "POST",
+      body: { note, payload: payload ?? null },
+    }),
   rejectRequest: (id: string, note?: string) =>
-    apiRequest<ApprovalRequestView>(`/approvals/${id}/reject`, { method: "POST", body: { note } }),
+    apiRequest<ApprovalDecisionResult>(`/approvals/${id}/reject`, { method: "POST", body: { note } }),
+  editRequest: (id: string, payload: Record<string, unknown>, note?: string) =>
+    apiRequest<ApprovalRequestView>(`/approvals/${id}/edit`, { method: "POST", body: { payload, note } }),
+  approvalQueue: (companyId?: string | null, status = "pending") =>
+    apiRequest<ApprovalQueue>(
+      `/approvals/queue?status=${status}${companyId ? `&company_id=${encodeURIComponent(companyId)}` : ""}`
+    ),
+  approvalHistory: (companyId?: string | null, limit = 50) =>
+    apiRequest<ApprovalRequestView[]>(
+      `/approvals/history?limit=${limit}${companyId ? `&company_id=${encodeURIComponent(companyId)}` : ""}`
+    ),
+  approvalAudit: (id: string) => apiRequest<CapabilityAuditEntry[]>(`/approvals/${id}/audit`),
+  approvePlan: (groupId: string, note?: string) =>
+    apiRequest<PlanDecisionResult>(`/approvals/plans/${groupId}/approve`, { method: "POST", body: { note } }),
+  rejectPlan: (groupId: string, note?: string) =>
+    apiRequest<PlanDecisionResult>(`/approvals/plans/${groupId}/reject`, { method: "POST", body: { note } }),
 
   // Scheduled jobs — the data model for background agents.
   listScheduledJobs: (companyId: string | "any" = "any") =>

@@ -261,6 +261,16 @@ export interface ApprovalRequestView {
   project_id: string | null;
   action_type: string;
   payload: Record<string, unknown> | null;
+  // The decision brief (see backend app/core/approval_brief.py).
+  summary: string;
+  reason: string | null;
+  expected_outcome: string;
+  risks: string[];
+  undo_plan: string;
+  // Plan grouping — steps of one execution plan share a group_id.
+  group_id: string | null;
+  group_label: string | null;
+  sequence: number;
   status: ApprovalStatus;
   requested_by: string | null;
   decided_by: string | null;
@@ -268,6 +278,47 @@ export interface ApprovalRequestView {
   executed_at: string | null;
   note: string | null;
   created_at: string | null;
+}
+
+// --- Approval Center -------------------------------------------------------
+// Every real-world action Jarvis proposes carries a decision brief, so a human
+// can judge it without reading raw JSON: what it is, why it was proposed, what
+// will happen, what could go wrong, and whether it can be taken back.
+export interface ApprovalPlan {
+  group_id: string;
+  label: string;
+  company_id: string | null;
+  steps: ApprovalRequestView[];
+  pending_steps: number;
+}
+export interface ApprovalQueue {
+  plans: ApprovalPlan[];
+  standalone: ApprovalRequestView[];
+  pending_count: number;
+}
+/** What a rejected step's plan did about it. */
+export interface ReplanResult {
+  run_id: string;
+  replanned: boolean;
+  new_steps: string[];
+  run_status: string;
+}
+export interface ApprovalDecisionResult extends ApprovalRequestView {
+  /** True once the action actually ran through its registered executor. */
+  executed?: boolean;
+  /** Set when the capability has no executor — consent recorded, nothing done. */
+  execution_note?: string;
+  /** Set when the executor ran and failed; the request stays 'approved'. */
+  execution_error?: string;
+  replan?: ReplanResult | null;
+}
+export interface PlanDecisionResult {
+  group_id: string;
+  decided: number;
+  /** The step a sequential run stopped at, if execution failed. */
+  stopped_at: string | null;
+  steps: ApprovalDecisionResult[];
+  queue: ApprovalQueue;
 }
 
 export interface CapabilityAuditEntry {

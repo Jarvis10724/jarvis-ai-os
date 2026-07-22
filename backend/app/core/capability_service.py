@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.core import approval_brief
 from app.core.capabilities_registry import CAPABILITIES, CapabilityDefinition, get_capability
 from app.db.models.capability import (
     APPROVAL_STATUSES,
@@ -130,13 +131,28 @@ def _default_config_view(capability_name: str, company_id: str | None, capabilit
 
 
 def serialize_approval(req: ApprovalRequest) -> dict:
+    payload = json.loads(req.payload_json) if req.payload_json else None
+    # Rows proposed before the Approval Center have no stored brief — derive it
+    # on read so every request explains itself, always.
+    derived = approval_brief.build_brief(req.capability_name, req.action_type, payload)
     return {
         "id": req.id,
         "capability_name": req.capability_name,
         "company_id": req.company_id,
         "project_id": req.project_id,
         "action_type": req.action_type,
-        "payload": json.loads(req.payload_json) if req.payload_json else None,
+        "payload": payload,
+        # The decision brief: what this is, why it was proposed, what will
+        # happen, what could go wrong, and whether it can be taken back.
+        "summary": req.summary or derived["summary"],
+        "reason": req.reason,
+        "expected_outcome": req.expected_outcome or derived["expected_outcome"],
+        "risks": json.loads(req.risks_json) if req.risks_json else derived["risks"],
+        "undo_plan": req.undo_plan or derived["undo_plan"],
+        # Plan grouping — many steps belonging to one execution plan.
+        "group_id": req.group_id,
+        "group_label": req.group_label,
+        "sequence": req.sequence or 0,
         "status": req.status,
         "requested_by": req.requested_by,
         "decided_by": req.decided_by,
@@ -336,6 +352,14 @@ def log_capability_action(
 # ---------------------------------------------------------------------------
 
 
+#: Capabilities that are Jarvis's own planned work rather than a registered
+#: external integration. They still get a full approval request (the whole
+#: point: nothing with real-world consequences happens unreviewed), but they
+#: have no OAuth integration, so the per-company capability permission grant
+#: that gates external services doesn't apply to them.
+INTERNAL_CAPABILITIES = {"work_queue"}
+
+
 def propose_action(
     db: Session,
     *,
@@ -346,22 +370,39 @@ def propose_action(
     company_id: str | None = None,
     project_id: str | None = None,
     requested_by: str | None = None,
+    brief: dict | None = None,
+    group_id: str | None = None,
+    group_label: str | None = None,
+    sequence: int = 0,
 ) -> dict:
-    capability_def = get_capability(capability_name)
-    action_def = _action_def(capability_def, action_type)
-    if not action_def.requires_approval:
-        raise ValidationError(
-            f"Action '{action_type}' on '{capability_name}' doesn't require approval — "
-            "call authorize_direct_action() instead."
-        )
+    """Propose a side-effecting action for human review.
+
+    `brief` optionally overrides any of summary/reason/expected_outcome/
+    risks/undo_plan — the proposer knows *why* it's asking; everything else
+    falls back to app.core.approval_brief's deterministic description of the
+    action type. `group_id`/`sequence` tie this into an execution plan so a
+    whole plan can be approved at once and run in order."""
+    internal = capability_name in INTERNAL_CAPABILITIES
+    if not internal:
+        capability_def = get_capability(capability_name)
+        action_def = _action_def(capability_def, action_type)
+        if not action_def.requires_approval:
+            raise ValidationError(
+                f"Action '{action_type}' on '{capability_name}' doesn't require approval — "
+                "call authorize_direct_action() instead."
+            )
     if company_id:
         _assert_company_owned(db, company_id, owner_id)
-    cfg = _find_config(db, owner_id, capability_name, company_id)
-    if cfg is not None and not cfg.enabled:
-        raise AuthorizationError(f"Capability '{capability_name}' is disabled for this company.")
-    if not is_action_permitted(cfg, capability_def, action_type):
-        raise AuthorizationError(f"Action '{action_type}' is not permitted for '{capability_name}' in this company.")
+    if not internal:
+        cfg = _find_config(db, owner_id, capability_name, company_id)
+        if cfg is not None and not cfg.enabled:
+            raise AuthorizationError(f"Capability '{capability_name}' is disabled for this company.")
+        if not is_action_permitted(cfg, capability_def, action_type):
+            raise AuthorizationError(
+                f"Action '{action_type}' is not permitted for '{capability_name}' in this company."
+            )
 
+    full_brief = approval_brief.merge_brief(capability_name, action_type, payload, brief)
     req = ApprovalRequest(
         owner_id=owner_id,
         company_id=company_id,
@@ -369,6 +410,14 @@ def propose_action(
         capability_name=capability_name,
         action_type=action_type,
         payload_json=json.dumps(payload),
+        summary=full_brief["summary"],
+        reason=full_brief.get("reason"),
+        expected_outcome=full_brief["expected_outcome"],
+        risks_json=json.dumps(full_brief["risks"]),
+        undo_plan=full_brief["undo_plan"],
+        group_id=group_id,
+        group_label=group_label,
+        sequence=sequence,
         status="pending",
         requested_by=requested_by or owner_id,
     )
@@ -426,6 +475,81 @@ def _record_approval_timeline(db: Session, req: ApprovalRequest, *, decision: st
         logger.error("approval_timeline_failed", request_id=req.id, error=str(exc))
 
 
+def _record_workspace_history(db: Session, req: ApprovalRequest, *, decision: str, note: str | None) -> None:
+    """Write the decision into the workspace's own history (memory), so "what
+    did we approve, and why" is answerable from the workspace itself — not only
+    from the capability audit log. Best-effort: a history hiccup must never
+    block or reverse a decision the user already made."""
+    try:
+        from app.db.models.memory import MemoryEntry
+
+        detail = serialize_approval(req)
+        body = [
+            f"Decision: {decision}",
+            f"Action: {req.capability_name} · {req.action_type}",
+            f"Summary: {detail['summary']}",
+            f"Expected outcome: {detail['expected_outcome']}",
+        ]
+        if detail.get("reason"):
+            body.append(f"Reason it was proposed: {detail['reason']}")
+        if note:
+            body.append(f"Note: {note}")
+        db.add(
+            MemoryEntry(
+                owner_id=req.owner_id,
+                company_id=req.company_id,
+                project_id=req.project_id,
+                scope="company" if req.company_id else "organization",
+                kind="decision",
+                title=f"Approval {decision}: {detail['summary'][:180]}",
+                content="\n".join(body),
+                source="approval_center",
+                source_ref=req.id,
+            )
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("approval_history_failed", request_id=req.id, error=str(exc))
+
+
+def edit_action(
+    db: Session, *, owner_id: str, request_id: str, payload: dict, edited_by: str | None = None, note: str | None = None
+) -> dict:
+    """Change what a pending request will actually do, before approving it —
+    "edit then approve". The original payload is preserved in the audit log's
+    `before`, so the trail shows exactly what was changed and by whom. The
+    brief's derived fields are rebuilt from the new payload (the old summary
+    would otherwise describe the wrong thing); proposer-written text (`reason`)
+    is left alone."""
+    req = _approval_owned(db, request_id, owner_id)
+    if req.status != "pending":
+        raise ValidationError(f"Only pending requests can be edited (this one is '{req.status}').")
+    before = serialize_approval(req)
+
+    derived = approval_brief.build_brief(req.capability_name, req.action_type, payload)
+    req.payload_json = json.dumps(payload)
+    req.summary = derived["summary"]
+    req.expected_outcome = derived["expected_outcome"]
+    req.risks_json = json.dumps(derived["risks"])
+    req.undo_plan = derived["undo_plan"]
+    db.commit()
+    db.refresh(req)
+
+    after = serialize_approval(req)
+    _write_audit(
+        db,
+        owner_id=owner_id,
+        company_id=req.company_id,
+        capability_name=req.capability_name,
+        approval_request_id=req.id,
+        action="edited",
+        before=before,
+        after=after,
+        note=note or f"Payload edited by {edited_by or owner_id} before approval.",
+    )
+    return after
+
+
 def approve_action(db: Session, *, owner_id: str, request_id: str, decided_by: str | None = None, note: str | None = None) -> dict:
     req = _approval_owned(db, request_id, owner_id)
     if req.status != "pending":
@@ -451,6 +575,7 @@ def approve_action(db: Session, *, owner_id: str, request_id: str, decided_by: s
         note=note,
     )
     _record_approval_timeline(db, req, decision="approved", note=note)
+    _record_workspace_history(db, req, decision="approved", note=note)
     return after
 
 
@@ -479,6 +604,7 @@ def reject_action(db: Session, *, owner_id: str, request_id: str, decided_by: st
         note=note,
     )
     _record_approval_timeline(db, req, decision="rejected", note=note)
+    _record_workspace_history(db, req, decision="rejected", note=note)
     return after
 
 

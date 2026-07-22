@@ -1,21 +1,34 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, HeartPulse, Loader2, ShieldCheck, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  HeartPulse,
+  History,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  ShieldCheck,
+  Undo2,
+  X,
+} from "lucide-react";
 import clsx from "clsx";
 
+import { api, ApiError } from "@/api/client";
 import ModulePageHeader from "@/components/ModulePageHeader";
 import StatusPill from "@/components/StatusPill";
-import { api, ApiError } from "@/api/client";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
-import type { ApprovalRequestView, ApprovalStatus, CapabilityView } from "@/types";
-
-const STATUS_TONE: Record<ApprovalStatus, "info" | "success" | "danger" | "neutral"> = {
-  pending: "info",
-  approved: "success",
-  rejected: "danger",
-  expired: "neutral",
-  executed: "success",
-};
+import type {
+  ApprovalDecisionResult,
+  ApprovalPlan,
+  ApprovalQueue,
+  ApprovalRequestView,
+  CapabilityAuditEntry,
+  CapabilityView,
+} from "@/types";
 
 const HEALTH_TONE: Record<CapabilityView["health_status"], "neutral" | "success" | "danger" | "accent"> = {
   unknown: "neutral",
@@ -24,83 +37,119 @@ const HEALTH_TONE: Record<CapabilityView["health_status"], "neutral" | "success"
   disconnected: "accent",
 };
 
-function timeAgo(iso: string | null): string {
-  if (!iso) return "";
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const mins = Math.round(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  return `${days}d ago`;
-}
+type DecideOpts = { payload?: Record<string, unknown>; note?: string };
+type DecideFn = (request: ApprovalRequestView, approve: boolean, opts?: DecideOpts) => void;
 
+/**
+ * The Approval Center — the gate every real-world action passes through.
+ *
+ * Nothing here is a rubber stamp: each request arrives with a brief (what it
+ * is, why it was proposed, what will happen, what could go wrong, and whether
+ * it can be undone), so the decision is made on facts rather than raw JSON.
+ * Approve, reject, or edit-then-approve; decide one step or a whole execution
+ * plan at once.
+ *
+ * The queue is served from the database, so it is identical after a refresh, a
+ * restart, or on another device. Approving runs the action immediately through
+ * its registered executor — and for a plan, runs the steps in sequence.
+ */
 export default function ApprovalsPage() {
-  const { companies } = useCompany();
+  const { activeCompany, activeCompanyId } = useCompany();
   const toast = useToast();
-
-  const [companyFilter, setCompanyFilter] = useState<string>("any");
-  const [statusFilter, setStatusFilter] = useState<ApprovalStatus | "">("pending");
-  const [approvals, setApprovals] = useState<ApprovalRequestView[]>([]);
+  const navigate = useNavigate();
+  const [queue, setQueue] = useState<ApprovalQueue | null>(null);
+  const [history, setHistory] = useState<ApprovalRequestView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const [capabilities, setCapabilities] = useState<CapabilityView[]>([]);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
   const [busyCapability, setBusyCapability] = useState<string | null>(null);
 
-  const capabilityCompanyId = companyFilter === "any" ? undefined : companyFilter;
-
-  const loadApprovals = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
-      const list = await api.listApprovals({
-        companyId: companyFilter as "any" | string,
-        status: statusFilter || undefined,
-      });
-      setApprovals(list);
+      const [q, h] = await Promise.all([
+        api.approvalQueue(activeCompanyId),
+        api.approvalHistory(activeCompanyId).catch(() => []),
+      ]);
+      setQueue(q);
+      setHistory(h);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load approvals.");
+      toast.push(err instanceof ApiError ? err.message : "Couldn't load the approval queue.", "error");
     } finally {
       setLoading(false);
     }
-  }, [companyFilter, statusFilter]);
+  }, [activeCompanyId, toast]);
 
   const loadCapabilities = useCallback(async () => {
     setCapabilitiesLoading(true);
     try {
-      const list = await api.listCapabilities(capabilityCompanyId);
-      setCapabilities(list);
-    } catch (err) {
-      toast.push(err instanceof ApiError ? err.message : "Failed to load capabilities.", "error");
+      setCapabilities(await api.listCapabilities(activeCompanyId ?? undefined));
+    } catch {
+      setCapabilities([]);
     } finally {
       setCapabilitiesLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capabilityCompanyId]);
+  }, [activeCompanyId]);
 
   useEffect(() => {
-    loadApprovals();
-  }, [loadApprovals]);
-
+    load();
+  }, [load]);
   useEffect(() => {
     loadCapabilities();
   }, [loadCapabilities]);
 
-  async function decide(id: string, action: "approve" | "reject") {
-    setDecidingId(id);
+  /** Report what actually happened — carried out, consented, failed, re-planned. */
+  function reportOutcome(result: ApprovalDecisionResult, fallback: string) {
+    if (result.execution_error) {
+      toast.push(`Approved, but it couldn't be carried out: ${result.execution_error}`, "error");
+    } else if (result.replan?.replanned) {
+      toast.push(`Rejected. Jarvis re-planned around it: ${result.replan.new_steps.join(", ")}`, "info");
+    } else if (result.replan && !result.replan.replanned) {
+      toast.push("Rejected. No alternative path was found, so the plan stopped here.", "info");
+    } else if (result.execution_note) {
+      toast.push(result.execution_note, "info");
+    } else {
+      toast.push(fallback, "success");
+    }
+  }
+
+  const decide: DecideFn = async (request, approve, opts) => {
+    setBusy(request.id);
     try {
-      if (action === "approve") await api.approveRequest(id);
-      else await api.rejectRequest(id);
-      toast.push(action === "approve" ? "Approved." : "Rejected.", "success");
-      await loadApprovals();
+      const result = approve
+        ? await api.approveRequest(request.id, opts?.note, opts?.payload)
+        : await api.rejectRequest(request.id, opts?.note);
+      reportOutcome(result, approve ? "Approved and carried out." : "Rejected.");
+      await load();
     } catch (err) {
-      toast.push(err instanceof ApiError ? err.message : `Failed to ${action}.`, "error");
+      toast.push(err instanceof ApiError ? err.message : "Couldn't record that decision.", "error");
     } finally {
-      setDecidingId(null);
+      setBusy(null);
+    }
+  };
+
+  async function decidePlan(plan: ApprovalPlan, approve: boolean) {
+    setBusy(plan.group_id);
+    try {
+      const result = approve ? await api.approvePlan(plan.group_id) : await api.rejectPlan(plan.group_id);
+      if (result.stopped_at) {
+        toast.push("Stopped partway: a step failed, so the rest of the plan was left pending.", "error");
+      } else {
+        toast.push(
+          approve
+            ? `Approved ${result.decided} step${result.decided === 1 ? "" : "s"} and ran them in order.`
+            : `Rejected ${result.decided} step${result.decided === 1 ? "" : "s"}.`,
+          approve ? "success" : "info"
+        );
+      }
+      await load();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Couldn't decide that plan.", "error");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -109,9 +158,8 @@ export default function ApprovalsPage() {
     try {
       await api.updateCapabilityConfig(capability.name, {
         enabled: !capability.enabled,
-        company_id: capabilityCompanyId ?? null,
+        company_id: activeCompanyId ?? null,
       });
-      toast.push(`${capability.description.split(" — ")[0]} ${capability.enabled ? "disabled" : "enabled"}.`, "success");
       await loadCapabilities();
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Failed to update capability.", "error");
@@ -123,7 +171,7 @@ export default function ApprovalsPage() {
   async function checkHealth(capability: CapabilityView) {
     setBusyCapability(capability.name);
     try {
-      const updated = await api.runCapabilityHealthCheck(capability.name, capabilityCompanyId);
+      const updated = await api.runCapabilityHealthCheck(capability.name, activeCompanyId ?? undefined);
       setCapabilities((prev) => prev.map((c) => (c.name === updated.name ? updated : c)));
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Health check failed.", "error");
@@ -132,143 +180,406 @@ export default function ApprovalsPage() {
     }
   }
 
+  const pendingStandalone = queue?.standalone.filter((r) => r.status === "pending") ?? [];
+
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-        <ModulePageHeader
-          icon={ShieldCheck}
-          title="Approvals"
-          description="Every external write any capability proposes waits here until you approve or reject it."
-          sampleData={false}
-        />
+    <main className="h-full min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+      <ModulePageHeader
+        icon={ShieldCheck}
+        title="Approval Center"
+        description={`Every action with real-world consequences in ${activeCompany?.name ?? "this workspace"} waits here. Nothing runs until you say so — and what you approve is carried out immediately.`}
+        sampleData={false}
+      />
 
-        <div className="hud-panel hud-corner flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
-          <select
-            value={companyFilter}
-            onChange={(e) => setCompanyFilter(e.target.value)}
-            className="rounded-xl border border-jarvis-border bg-jarvis-panel2/50 px-3 py-2.5 text-sm text-jarvis-text focus:border-jarvis-cyan/50 focus:outline-none"
-          >
-            <option value="any">All companies</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as ApprovalStatus | "")}
-            className="rounded-xl border border-jarvis-border bg-jarvis-panel2/50 px-3 py-2.5 text-sm text-jarvis-text focus:border-jarvis-cyan/50 focus:outline-none"
-          >
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="executed">Executed</option>
-            <option value="">All statuses</option>
-          </select>
+      {loading && !queue ? (
+        <div className="hud-panel hud-corner space-y-3 p-4">
+          <div className="skeleton h-4 w-2/3 rounded" />
+          <div className="skeleton h-3 w-full rounded" />
         </div>
+      ) : (
+        <>
+          {queue?.pending_count === 0 && (
+            <div className="hud-panel hud-corner flex items-center gap-3 p-4 text-sm text-jarvis-muted">
+              <Check className="h-4 w-4 shrink-0 text-jarvis-emerald" />
+              Nothing is waiting for your approval.
+            </div>
+          )}
 
-        {loading && (
-          <div className="flex flex-1 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-jarvis-cyan" />
-          </div>
-        )}
-        {error && <p className="text-sm text-jarvis-rose">{error}</p>}
+          {queue?.plans.map((plan) => (
+            <PlanCard
+              key={plan.group_id}
+              plan={plan}
+              busy={busy}
+              onDecideStep={decide}
+              onDecidePlan={decidePlan}
+              onOpenPlan={() => navigate(`/company/work-queue?run=${plan.group_id}`)}
+            />
+          ))}
 
-        {!loading && !error && (
-          <div className="hud-panel hud-corner overflow-y-auto">
-            <ul className="divide-y divide-jarvis-border/40">
-              {approvals.map((req) => (
-                <li key={req.id} className="flex items-start justify-between gap-3 px-5 py-3.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium capitalize text-jarvis-text">
-                        {req.capability_name.replace("_", " ")} · {req.action_type.replace("_", " ")}
+          {pendingStandalone.map((request) => (
+            <RequestCard key={request.id} request={request} busy={busy} onDecide={decide} />
+          ))}
+
+          {/* The record: what has already been decided, and why. */}
+          <section className="hud-panel hud-corner p-4">
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className="flex w-full items-center gap-2 text-left text-xs font-semibold uppercase tracking-widest text-jarvis-faint"
+            >
+              <History className="h-3.5 w-3.5" />
+              Decision history ({history.length})
+              <ChevronDown className={clsx("ml-auto h-4 w-4 transition-transform", showHistory && "rotate-180")} />
+            </button>
+            {showHistory && (
+              <ul className="mt-3 space-y-2">
+                {history.length === 0 && <li className="text-sm text-jarvis-muted">Nothing decided yet.</li>}
+                {history.map((h) => (
+                  <li key={h.id} className="flex items-start gap-2 text-sm">
+                    <StatusDot status={h.status} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-jarvis-text">{h.summary}</p>
+                      <p className="text-[11px] text-jarvis-muted">
+                        {h.status}
+                        {h.decided_at ? ` · ${new Date(h.decided_at).toLocaleString()}` : ""}
+                        {h.note ? ` · “${h.note}”` : ""}
                       </p>
-                      <StatusPill label={req.status} tone={STATUS_TONE[req.status]} />
                     </div>
-                    {req.payload && (
-                      <p className="mt-1 truncate text-xs text-jarvis-muted">{JSON.stringify(req.payload)}</p>
-                    )}
-                    <p className="mt-1 text-xs text-jarvis-faint">{timeAgo(req.created_at)}</p>
-                  </div>
-                  {req.status === "pending" && (
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        onClick={() => decide(req.id, "approve")}
-                        disabled={decidingId === req.id}
-                        className="press-scale flex items-center gap-1 rounded-xl border border-jarvis-emerald/50 bg-jarvis-emerald/10 px-3 py-1.5 text-xs font-semibold text-jarvis-emerald transition hover:bg-jarvis-emerald/20 disabled:opacity-50"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => decide(req.id, "reject")}
-                        disabled={decidingId === req.id}
-                        className="press-scale flex items-center gap-1 rounded-xl border border-jarvis-rose/50 bg-jarvis-rose/10 px-3 py-1.5 text-xs font-semibold text-jarvis-rose transition hover:bg-jarvis-rose/20 disabled:opacity-50"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-              {approvals.length === 0 && (
-                <li className="px-5 py-16 text-center text-sm text-jarvis-muted">
-                  Nothing waiting on you right now.
-                </li>
-              )}
-            </ul>
-          </div>
-        )}
-
-        <ModulePageHeader
-          icon={HeartPulse}
-          title="Capabilities"
-          description="Enable/disable and check connection health per capability — permissions per action come with each integration as it's built."
-          sampleData={false}
-        />
-
-        <div className="hud-panel hud-corner overflow-y-auto">
-          <ul className="divide-y divide-jarvis-border/40">
-            {capabilitiesLoading && (
-              <li className="flex justify-center px-5 py-10">
-                <Loader2 className="h-5 w-5 animate-spin text-jarvis-cyan" />
-              </li>
+                  </li>
+                ))}
+              </ul>
             )}
-            {!capabilitiesLoading &&
-              capabilities.map((cap) => (
-                <li key={cap.name} className="flex items-center justify-between gap-3 px-5 py-3.5">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium capitalize text-jarvis-text">{cap.name.replace("_", " ")}</p>
-                    <p className="text-xs text-jarvis-muted">{cap.description}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <StatusPill label={cap.health_status} tone={HEALTH_TONE[cap.health_status]} />
-                    <button
-                      onClick={() => checkHealth(cap)}
-                      disabled={busyCapability === cap.name}
-                      className="press-scale rounded-xl border border-jarvis-border bg-jarvis-panel2/50 px-3 py-1.5 text-xs font-medium text-jarvis-muted transition hover:text-jarvis-text disabled:opacity-50"
-                    >
-                      Check health
-                    </button>
-                    <button
-                      onClick={() => toggleCapability(cap)}
-                      disabled={busyCapability === cap.name}
-                      className={clsx(
-                        "press-scale rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50",
-                        cap.enabled
-                          ? "border-jarvis-emerald/50 bg-jarvis-emerald/10 text-jarvis-emerald hover:bg-jarvis-emerald/20"
-                          : "border-jarvis-border bg-jarvis-panel2/50 text-jarvis-muted hover:text-jarvis-text"
-                      )}
-                    >
-                      {cap.enabled ? "Enabled" : "Disabled"}
-                    </button>
-                  </div>
+          </section>
+        </>
+      )}
+
+      {/* Which capabilities are allowed to propose anything at all. */}
+      <ModulePageHeader
+        icon={HeartPulse}
+        title="Capabilities"
+        description="Enable/disable and check connection health per capability. A disabled capability can't even propose an action."
+        sampleData={false}
+      />
+      <div className="hud-panel hud-corner">
+        <ul className="divide-y divide-jarvis-border/40">
+          {capabilitiesLoading && (
+            <li className="flex justify-center px-5 py-10">
+              <Loader2 className="h-5 w-5 animate-spin text-jarvis-cyan" />
+            </li>
+          )}
+          {!capabilitiesLoading &&
+            capabilities.map((cap) => (
+              <li key={cap.name} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium capitalize text-jarvis-text">{cap.name.replace("_", " ")}</p>
+                  <p className="text-xs text-jarvis-muted">{cap.description}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusPill label={cap.health_status} tone={HEALTH_TONE[cap.health_status]} />
+                  <button
+                    onClick={() => checkHealth(cap)}
+                    disabled={busyCapability === cap.name}
+                    className="press-scale rounded-xl border border-jarvis-border bg-jarvis-panel2/50 px-3 py-1.5 text-xs font-medium text-jarvis-muted transition hover:text-jarvis-text disabled:opacity-50"
+                  >
+                    Check health
+                  </button>
+                  <button
+                    onClick={() => toggleCapability(cap)}
+                    disabled={busyCapability === cap.name}
+                    className={clsx(
+                      "press-scale rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50",
+                      cap.enabled
+                        ? "border-jarvis-emerald/50 bg-jarvis-emerald/10 text-jarvis-emerald hover:bg-jarvis-emerald/20"
+                        : "border-jarvis-border bg-jarvis-panel2/50 text-jarvis-muted hover:text-jarvis-text"
+                    )}
+                  >
+                    {cap.enabled ? "Enabled" : "Disabled"}
+                  </button>
+                </div>
+              </li>
+            ))}
+        </ul>
+      </div>
+    </main>
+  );
+}
+
+function StatusDot({ status }: { status: string }) {
+  const tone =
+    status === "executed" || status === "approved"
+      ? "bg-jarvis-emerald"
+      : status === "rejected"
+        ? "bg-jarvis-rose"
+        : "bg-jarvis-amber";
+  return <span className={clsx("mt-1.5 h-2 w-2 shrink-0 rounded-full", tone)} />;
+}
+
+/** An execution plan: many steps, decidable together or one at a time. */
+function PlanCard({
+  plan,
+  busy,
+  onDecideStep,
+  onDecidePlan,
+  onOpenPlan,
+}: {
+  plan: ApprovalPlan;
+  busy: string | null;
+  onDecideStep: DecideFn;
+  onDecidePlan: (plan: ApprovalPlan, approve: boolean) => void;
+  onOpenPlan: () => void;
+}) {
+  const pending = plan.steps.filter((s) => s.status === "pending");
+  if (pending.length === 0) return null;
+  const working = busy === plan.group_id;
+
+  return (
+    <section className="hud-panel hud-corner space-y-3 p-4">
+      <div className="flex items-start gap-2">
+        <ClipboardList className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--ws-accent)" }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-jarvis-text">{plan.label}</p>
+          <button onClick={onOpenPlan} className="text-[11px] text-jarvis-muted underline-offset-2 hover:underline">
+            {pending.length} step{pending.length === 1 ? "" : "s"} awaiting approval · open the plan →
+          </button>
+        </div>
+      </div>
+
+      {/* Whole-plan decision: approving runs the steps in order. */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onDecidePlan(plan, true)}
+          disabled={working}
+          className="press-scale flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-3 py-2 text-xs font-semibold text-jarvis-emerald transition hover:bg-jarvis-emerald/20 disabled:opacity-40"
+        >
+          {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+          Approve all {pending.length} in order
+        </button>
+        <button
+          onClick={() => onDecidePlan(plan, false)}
+          disabled={working}
+          className="press-scale flex items-center justify-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-xs font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40"
+        >
+          <X className="h-3.5 w-3.5" /> Reject all
+        </button>
+      </div>
+
+      <div className="space-y-2 border-t border-jarvis-border/40 pt-2">
+        {pending.map((step, i) => (
+          <RequestCard key={step.id} request={step} busy={busy} onDecide={onDecideStep} stepNumber={i + 1} nested />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** One request, with everything a human needs in order to decide it. */
+function RequestCard({
+  request,
+  busy,
+  onDecide,
+  stepNumber,
+  nested = false,
+}: {
+  request: ApprovalRequestView;
+  busy: string | null;
+  onDecide: DecideFn;
+  stepNumber?: number;
+  nested?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [invalid, setInvalid] = useState(false);
+  const [expanded, setExpanded] = useState(!nested);
+  const [audit, setAudit] = useState<CapabilityAuditEntry[] | null>(null);
+  const working = busy === request.id;
+
+  function startEditing() {
+    setDraft(JSON.stringify(request.payload ?? {}, null, 2));
+    setInvalid(false);
+    setEditing(true);
+    setExpanded(true);
+  }
+
+  function approveEdited() {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(draft);
+    } catch {
+      setInvalid(true);
+      return;
+    }
+    setEditing(false);
+    onDecide(request, true, { payload: parsed, note: "Edited before approval." });
+  }
+
+  async function toggleAudit() {
+    if (audit) return setAudit(null);
+    try {
+      setAudit(await api.approvalAudit(request.id));
+    } catch {
+      setAudit([]);
+    }
+  }
+
+  return (
+    <article
+      className={nested ? "rounded-xl border border-jarvis-border/50 bg-jarvis-panel2/20 p-3" : "hud-panel hud-corner p-4"}
+    >
+      <div className="flex items-start gap-2">
+        {stepNumber !== undefined && (
+          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-jarvis-panel3/50 text-[10px] font-bold text-jarvis-muted">
+            {stepNumber}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-jarvis-text">{request.summary}</p>
+          <p className="mt-0.5 text-[11px] uppercase tracking-wide text-jarvis-faint">
+            {request.capability_name} · {request.action_type}
+          </p>
+        </div>
+        {nested && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            aria-label={expanded ? "Hide details" : "Show details"}
+            className="press-scale shrink-0 rounded-lg p-1 text-jarvis-muted hover:text-jarvis-text"
+          >
+            <ChevronDown className={clsx("h-4 w-4 transition-transform", expanded && "rotate-180")} />
+          </button>
+        )}
+      </div>
+
+      {expanded && (
+        <div className="mt-2.5 space-y-2.5 text-xs">
+          {request.reason && <Field label="Why" value={request.reason} />}
+          <Field label="Expected outcome" value={request.expected_outcome} />
+
+          {request.risks.length > 0 && (
+            <div>
+              <p className="mb-1 flex items-center gap-1 font-semibold uppercase tracking-wide text-jarvis-amber">
+                <AlertTriangle className="h-3 w-3" /> Risks
+              </p>
+              <ul className="space-y-0.5">
+                {request.risks.map((risk, i) => (
+                  <li key={i} className="text-jarvis-muted">
+                    · {risk}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div>
+            <p className="mb-1 flex items-center gap-1 font-semibold uppercase tracking-wide text-jarvis-faint">
+              <Undo2 className="h-3 w-3" /> If this turns out wrong
+            </p>
+            <p className="text-jarvis-muted">{request.undo_plan}</p>
+          </div>
+
+          {/* What will actually run — editable before approving. */}
+          {editing ? (
+            <div>
+              <p className="mb-1 font-semibold uppercase tracking-wide text-jarvis-faint">Edit before approving</p>
+              <textarea
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setInvalid(false);
+                }}
+                rows={6}
+                spellCheck={false}
+                className={clsx(
+                  "w-full resize-y rounded-lg border bg-jarvis-panel2/50 px-2 py-1.5 font-data text-[11px] text-jarvis-text focus:outline-none",
+                  invalid ? "border-jarvis-rose" : "border-jarvis-border"
+                )}
+              />
+              {invalid && <p className="mt-1 text-jarvis-rose">That isn't valid JSON — fix it before approving.</p>}
+            </div>
+          ) : (
+            request.payload && (
+              <details className="text-jarvis-muted">
+                <summary className="cursor-pointer font-semibold uppercase tracking-wide text-jarvis-faint">
+                  Exactly what will run
+                </summary>
+                <pre className="mt-1 overflow-x-auto rounded-lg bg-jarvis-panel2/40 p-2 font-data text-[10px]">
+                  {JSON.stringify(request.payload, null, 2)}
+                </pre>
+              </details>
+            )
+          )}
+
+          <button
+            onClick={toggleAudit}
+            className="text-[11px] font-medium text-jarvis-muted underline-offset-2 hover:underline"
+          >
+            {audit ? "Hide trail" : "Show trail"}
+          </button>
+          {audit && (
+            <ul className="space-y-1 border-l border-jarvis-border/50 pl-2">
+              {audit.length === 0 && <li className="text-jarvis-muted">No entries yet.</li>}
+              {audit.map((row) => (
+                <li key={row.id} className="text-[11px] text-jarvis-muted">
+                  <span className="font-semibold text-jarvis-text">{row.action}</span>
+                  {row.created_at ? ` · ${new Date(row.created_at).toLocaleString()}` : ""}
+                  {row.note ? ` · ${row.note}` : ""}
                 </li>
               ))}
-          </ul>
+            </ul>
+          )}
         </div>
-    </main>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {editing ? (
+          <>
+            <button
+              onClick={approveEdited}
+              disabled={working}
+              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-3 py-2 text-xs font-semibold text-jarvis-emerald transition hover:bg-jarvis-emerald/20 disabled:opacity-40"
+            >
+              <Check className="h-3.5 w-3.5" /> Approve edited
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-xs font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => onDecide(request, true)}
+              disabled={working}
+              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-3 py-2 text-xs font-semibold text-jarvis-emerald transition hover:bg-jarvis-emerald/20 disabled:opacity-40"
+            >
+              {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Approve
+            </button>
+            <button
+              onClick={() => onDecide(request, false)}
+              disabled={working}
+              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-xs font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40"
+            >
+              <X className="h-3.5 w-3.5" /> Reject
+            </button>
+            <button
+              onClick={startEditing}
+              disabled={working}
+              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-xs font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </button>
+          </>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="mb-0.5 font-semibold uppercase tracking-wide text-jarvis-faint">{label}</p>
+      <p className="text-jarvis-muted">{value}</p>
+    </div>
   );
 }
