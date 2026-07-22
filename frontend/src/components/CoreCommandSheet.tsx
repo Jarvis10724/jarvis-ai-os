@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { CornerDownLeft, Wrench, X } from "lucide-react";
+import { CornerDownLeft, ExternalLink, SquarePen, Wrench, X } from "lucide-react";
 
 import { api, ApiError } from "@/api/client";
 import JarvisCore from "@/components/JarvisCore";
@@ -26,11 +27,46 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   const workspace = useWorkspace();
   const { setStatus } = useAssistantStatus();
   const coreState = useCoreState();
+  const navigate = useNavigate();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Persist the conversation PER WORKSPACE so it survives closing the sheet,
+  // navigating, and full reloads — and each workspace keeps its own thread.
+  const threadKey = `jarvis_core_thread_${activeCompanyId ?? "global"}`;
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(threadKey);
+      setMessages(saved ? (JSON.parse(saved) as ChatMessage[]) : []);
+    } catch {
+      setMessages([]);
+    }
+  }, [threadKey]);
+  useEffect(() => {
+    try {
+      if (messages.length) localStorage.setItem(threadKey, JSON.stringify(messages.slice(-60)));
+    } catch {
+      /* storage full / unavailable — thread still lives in memory this session */
+    }
+  }, [messages, threadKey]);
+
+  function newThread() {
+    setMessages([]);
+    try {
+      localStorage.removeItem(threadKey);
+    } catch {
+      /* ignore */
+    }
+    inputRef.current?.focus();
+  }
+
+  function goto(path: string) {
+    navigate(path);
+    onClose();
+  }
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120);
@@ -102,6 +138,16 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
                   {activeCompany ? `${activeCompany.name} · ${workspace.role}` : "AI Operating System"}
                 </p>
               </div>
+              {messages.length > 0 && (
+                <button
+                  onClick={newThread}
+                  title="New conversation"
+                  aria-label="New conversation"
+                  className="press-scale rounded-lg p-2 text-jarvis-muted transition hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
+                >
+                  <SquarePen className="h-4 w-4" />
+                </button>
+              )}
               <button
                 onClick={onClose}
                 aria-label="Close"
@@ -132,7 +178,9 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
                       }
                     >
                       <p className="whitespace-pre-wrap">{m.content}</p>
-                      {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
+                      {m.toolCalls && m.toolCalls.length > 0 && (
+                        <ToolCalls calls={m.toolCalls} onNavigate={goto} />
+                      )}
                     </div>
                   </div>
                 ))}
@@ -180,16 +228,38 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   );
 }
 
-function ToolCalls({ calls }: { calls: ToolCallLog[] }) {
+// Where a tool's result can be viewed in the UI — turns an AI action into a
+// tap-through to the relevant manager (connects the Core to Project/Task work).
+const TOOL_DESTINATION: Record<string, { label: string; path: string }> = {
+  create_task: { label: "Open Task Manager", path: "/company/projects" },
+  create_project: { label: "Open Project Manager", path: "/company/projects" },
+  propose_update_product: { label: "Open Brand Brain", path: "/company/brand-brain" },
+  propose_send_email: { label: "Review approvals", path: "/approvals" },
+  propose_create_calendar_event: { label: "Review approvals", path: "/approvals" },
+};
+
+function ToolCalls({ calls, onNavigate }: { calls: ToolCallLog[]; onNavigate: (path: string) => void }) {
   return (
-    <div className="mt-2 space-y-1 border-t border-jarvis-border/40 pt-2">
-      {calls.map((c, i) => (
-        <div key={i} className="flex items-center gap-1.5 text-[11px] text-jarvis-muted">
-          <Wrench className={c.is_error ? "h-3 w-3 text-jarvis-rose" : "h-3 w-3 text-jarvis-cyan"} />
-          <span className="font-medium text-jarvis-text">{c.name}</span>
-          <span className="truncate">{c.is_error ? "failed" : "ran"}</span>
-        </div>
-      ))}
+    <div className="mt-2 space-y-1.5 border-t border-jarvis-border/40 pt-2">
+      {calls.map((c, i) => {
+        const dest = !c.is_error ? TOOL_DESTINATION[c.name] : undefined;
+        return (
+          <div key={i} className="flex items-center gap-2 text-[11px] text-jarvis-muted">
+            <Wrench className={c.is_error ? "h-3 w-3 shrink-0 text-jarvis-rose" : "h-3 w-3 shrink-0 text-jarvis-cyan"} />
+            <span className="font-medium text-jarvis-text">{c.name}</span>
+            <span>{c.is_error ? "failed" : "ran"}</span>
+            {dest && (
+              <button
+                onClick={() => onNavigate(dest.path)}
+                className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-colors hover:bg-jarvis-panel2/60"
+                style={{ color: "var(--ws-accent)" }}
+              >
+                {dest.label} <ExternalLink className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
