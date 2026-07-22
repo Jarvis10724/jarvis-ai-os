@@ -86,7 +86,16 @@ export default function CompanySwitcher({ onNavigate }: { onNavigate?: () => voi
                       : "text-jarvis-muted hover:bg-jarvis-panel2/60 hover:text-jarvis-text"
                   )}
                 >
-                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{c.name}</span>
+                    {/* Its brands/DBAs — Primal Penni is operated by SPN Group
+                        LLC, not a workspace of its own, so name it here. */}
+                    {c.divisions && c.divisions.length > 0 && (
+                      <span className="block truncate text-[11px] text-jarvis-faint">
+                        {c.divisions.join(" · ")}
+                      </span>
+                    )}
+                  </span>
                   {c.id === activeCompanyId && (
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-jarvis-cyan shadow-glow-sm" />
                   )}

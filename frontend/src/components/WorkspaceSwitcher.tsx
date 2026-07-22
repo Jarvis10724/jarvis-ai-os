@@ -86,6 +86,14 @@ export default function WorkspaceSwitcher({ open, onClose }: { open: boolean; on
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-jarvis-text">{c.name}</span>
                         <span className="block truncate text-[11px] text-jarvis-muted">{ws.role}</span>
+                        {/* The brands this workspace operates (its DBAs). They
+                            live inside the company rather than beside it, so
+                            without this the operator can't see them here. */}
+                        {c.divisions && c.divisions.length > 0 && (
+                          <span className="block truncate text-[11px] text-jarvis-muted">
+                            Operates {c.divisions.join(" · ")}
+                          </span>
+                        )}
                         {c.parent_company_name && (
                           <span className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-jarvis-faint">
                             <Network className="h-2.5 w-2.5 shrink-0" />
