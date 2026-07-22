@@ -201,9 +201,11 @@ export default function CompanyProfile() {
           </div>
         </motion.div>
 
-        <div className="flex min-h-0 flex-1 gap-4">
+        {/* Stacks on a phone — a fixed side rail leaves the panel too narrow to
+            operate at 375px — and returns to a side rail from md up. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
           {/* Tabs */}
-          <nav className="hud-panel flex w-56 shrink-0 flex-col gap-0.5 overflow-y-auto p-3">
+          <nav className="hud-panel flex shrink-0 gap-0.5 overflow-x-auto p-2 md:w-56 md:flex-col md:overflow-y-auto md:p-3">
             {SECTION_TABS.map(({ key, label, icon: Icon }, i) => {
               const tabStatus = !CUSTOM_TABS.has(key) ? company.sections[key]?.status : null;
               const isActive = activeTab === key;
@@ -247,7 +249,7 @@ export default function CompanyProfile() {
           </nav>
 
           {/* Content */}
-          <div className="hud-panel hud-corner min-h-0 flex-1 overflow-hidden p-6">
+          <div className="hud-panel hud-corner p-3 md:min-h-0 md:flex-1 md:overflow-hidden sm:p-6">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}
