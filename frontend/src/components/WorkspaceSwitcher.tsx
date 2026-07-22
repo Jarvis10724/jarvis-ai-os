@@ -1,11 +1,35 @@
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Network, Plus } from "lucide-react";
 
 import { useCompany } from "@/context/CompanyContext";
 import { usePrompt } from "@/context/PromptContext";
 import { useToast } from "@/context/ToastContext";
-import { ApiError } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { resolveWorkspace } from "@/lib/workspace";
+
+/** What a workspace actually has wired up, read live — never assumed. */
+interface WorkspaceFacts {
+  connected: string[];
+  missing: string[];
+  brandBrain: string | null;
+}
+
+//: provider name -> the label an operator recognises
+const CONNECTION_LABELS: Record<string, string> = {
+  email: "Gmail",
+  google_calendar: "Calendar",
+  google_drive: "Drive",
+  shopify: "Shopify",
+  quickbooks: "QuickBooks",
+};
+
+//: the connections worth calling out as MISSING, per workspace kind — a
+//: consumer-brands workspace without Gmail is a gap; without QuickBooks isn't.
+const EXPECTED: Record<string, string[]> = {
+  "consumer-brands": ["email", "shopify"],
+  "innovation-hub": ["email", "google_calendar"],
+};
 
 /**
  * Global workspace switcher — reachable from the top bar on every screen, so
@@ -23,6 +47,51 @@ export default function WorkspaceSwitcher({ open, onClose }: { open: boolean; on
   const { companies, activeCompanyId, setActiveCompanyId, createCompany, loading } = useCompany();
   const prompt = usePrompt();
   const toast = useToast();
+  const [facts, setFacts] = useState<Record<string, WorkspaceFacts>>({});
+
+  // Read each workspace's real wiring when the sheet opens — what's connected,
+  // what's expected but missing, and whether its store catalog is synced. Kept
+  // lazy and best-effort: a workspace whose status can't be read shows its
+  // identity only, never a guess about its integrations.
+  useEffect(() => {
+    if (!open || companies.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      companies.map(async (c) => {
+        const [integrations, brain] = await Promise.all([
+          api.listIntegrations(c.id).catch(() => []),
+          api.getBrandBrain(c.id).catch(() => null),
+        ]);
+        const connected = integrations.filter((i) => i.connected).map((i) => i.name);
+        // Shopify authenticates from server config rather than an OAuth
+        // credential row, so the integrations endpoint can't see it. A synced
+        // Shopify-sourced Brand Brain IS the evidence the connection works —
+        // without this the switcher would call a live store "not connected".
+        if (brain?.exists && brain.source === "shopify" && !connected.includes("shopify")) {
+          connected.push("shopify");
+        }
+        const expected = EXPECTED[c.company_type ?? ""] ?? [];
+        return [
+          c.id,
+          {
+            connected: connected.map((n) => CONNECTION_LABELS[n] ?? n),
+            missing: expected
+              .filter((n) => !connected.includes(n))
+              .map((n) => CONNECTION_LABELS[n] ?? n),
+            brandBrain:
+              brain && brain.exists
+                ? `Brand Brain · ${brain.product_count} product${brain.product_count === 1 ? "" : "s"}`
+                : null,
+          } as WorkspaceFacts,
+        ] as const;
+      })
+    )
+      .then((entries) => !cancelled && setFacts(Object.fromEntries(entries)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, companies]);
 
   async function handleNew() {
     const values = await prompt({
@@ -94,6 +163,29 @@ export default function WorkspaceSwitcher({ open, onClose }: { open: boolean; on
                             Operates {c.divisions.join(" · ")}
                           </span>
                         )}
+                        {/* What this workspace actually has wired up. Only
+                            connections that really are connected are listed;
+                            an expected one that isn't says so plainly rather
+                            than being quietly omitted. */}
+                        {(() => {
+                          const f = facts[c.id];
+                          if (!f) return null;
+                          const items = [...f.connected, ...(f.brandBrain ? [f.brandBrain] : [])];
+                          return (
+                            <>
+                              {items.length > 0 && (
+                                <span className="mt-1 block truncate text-[11px] text-jarvis-muted">
+                                  {items.join(" · ")}
+                                </span>
+                              )}
+                              {f.missing.length > 0 && (
+                                <span className="block truncate text-[11px] text-jarvis-amber">
+                                  {f.missing.join(" · ")} not connected
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                         {c.parent_company_name && (
                           <span className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-jarvis-faint">
                             <Network className="h-2.5 w-2.5 shrink-0" />
