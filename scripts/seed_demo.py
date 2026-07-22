@@ -20,6 +20,7 @@ Run from the repo root (see the DB cwd gotcha) after migrating:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -40,7 +41,10 @@ from app.db.models.workspace_session import WorkspaceSession  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 
 DEMO_EMAIL = "hello@primalpennicollective.com"
-DEMO_PASSWORD = "changeme-demo-password"
+# Never hardcode a real credential in the repo — the demo password comes from
+# the environment (set DEMO_PASSWORD before seeding), with a harmless
+# placeholder default that should be overridden.
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "changeme-demo-password")
 COMPANY_NAME = "SNP Group LLC"
 DBA = "Primal Penni"
 SHOWCASE_PROJECT = "Primal Penni Product Landing Page"
