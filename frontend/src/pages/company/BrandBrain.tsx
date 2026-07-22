@@ -65,7 +65,8 @@ export default function BrandBrainPage() {
     setSyncing(true);
     try {
       const res = await api.syncBrandBrain(activeCompanyId);
-      toast.push(`Imported ${res.product_count} products, ${res.collection_count} collections.`, "success");
+      const mem = res.memory_entries ? ` · ${res.memory_entries} added to AI memory` : "";
+      toast.push(`Imported ${res.product_count} products, ${res.collection_count} collections${mem}.`, "success");
       await load();
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Sync failed.", "error");

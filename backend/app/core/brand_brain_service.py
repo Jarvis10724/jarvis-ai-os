@@ -18,8 +18,13 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core import shopify_service
+from app.core import memory_service, shopify_service
 from app.db.models.brand_brain import BrandBrain, BrandCollection, BrandProduct
+from app.db.models.memory import MemoryEntry
+
+# Marks the memory entries this service writes, so a re-sync can replace them
+# idempotently and nothing else is ever touched.
+MEMORY_SOURCE = "brand_brain"
 
 # How many pages (of 50) to walk at most, so a sync can't loop forever.
 _MAX_PAGES = 100
@@ -190,15 +195,73 @@ async def sync_from_shopify(db: Session, *, owner_id: str, company_id: str | Non
     brain.last_synced_at = datetime.now(timezone.utc)
 
     db.commit()
+
+    # Mirror the fresh brain into per-workspace project memory so the AI Core
+    # can recall the real catalog. Best-effort: a memory hiccup must not fail an
+    # otherwise-successful import (the store data is already committed above).
+    try:
+        memory_entries = await sync_to_memory(db, owner_id=owner_id, company_id=company_id)
+    except Exception:
+        memory_entries = 0
+
     return {
         "synced_at": brain.last_synced_at.isoformat(),
         "store_name": brain.store_name,
         "store_domain": brain.store_domain,
         "product_count": brain.product_count,
         "collection_count": brain.collection_count,
+        "memory_entries": memory_entries,
         "read_only": True,
         "write_enabled": settings.SHOPIFY_WRITE_ENABLED,
     }
+
+
+async def sync_to_memory(db: Session, *, owner_id: str, company_id: str) -> int:
+    """Mirror the workspace's Brand Brain into company-scoped project memory —
+    one recallable entry per product plus a store-profile fact — so Jarvis's AI
+    Core and agents can reason over the real catalog through the normal memory
+    recall path. Idempotent: clears this workspace's prior brand_brain entries
+    first, so a re-sync never duplicates and dropped products fall out. Reads
+    from Jarvis's own DB only; never contacts or writes to Shopify."""
+    db.query(MemoryEntry).filter(
+        MemoryEntry.company_id == company_id, MemoryEntry.source == MEMORY_SOURCE
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    brain = _brain(db, company_id)
+    if not brain:
+        return 0
+
+    count = 0
+    collections = list_collections(db, company_id)
+    await memory_service.record_memory(
+        db, owner_id=owner_id, kind="fact", scope="company", company_id=company_id,
+        source=MEMORY_SOURCE, source_ref="store",
+        title=f"Brand: {brain.store_name or 'Store'}",
+        content=(
+            f"Brand Brain for {brain.store_name} ({brain.store_domain}). Currency {brain.currency}, "
+            f"plan {brain.plan_name}. {brain.product_count} products across {brain.collection_count} "
+            f"collections: {', '.join(c['title'] for c in collections)}."
+        ),
+    )
+    count += 1
+
+    for p in list_products(db, company_id, limit=250):
+        price = f"{p['price_min']:.2f} {p['currency']}" if p["price_min"] is not None else "price n/a"
+        tags = ", ".join(p["tags"][:12])
+        content = (
+            f"{brain.store_name} product: {p['title']}. Price {price}. "
+            f"Type: {p['product_type'] or 'n/a'}. Status: {p['status'] or 'n/a'}. "
+            f"Tags: {tags}. {p['description'] or ''}"
+        ).strip()
+        await memory_service.record_memory(
+            db, owner_id=owner_id, kind="product", scope="company", company_id=company_id,
+            source=MEMORY_SOURCE, source_ref=f"product:{p['shopify_id']}",
+            title=p["title"], content=content,
+        )
+        count += 1
+
+    return count
 
 
 # ---------------------------------------------------------------------------
