@@ -20,6 +20,7 @@ const BrandBrainPage = lazy(() => import("@/pages/company/BrandBrain"));
 const ExecutiveDashboardPage = lazy(() => import("@/pages/company/ExecutiveDashboard"));
 const WorkQueuePage = lazy(() => import("@/pages/company/WorkQueue"));
 const WorkspaceIntelligencePage = lazy(() => import("@/pages/company/WorkspaceIntelligence"));
+const WorkspaceImportPage = lazy(() => import("@/pages/company/WorkspaceImport"));
 const CompanyDashboardPage = lazy(() => import("@/pages/company/CompanyDashboard"));
 const ContentCalendarPage = lazy(() => import("@/pages/company/ContentCalendar"));
 const CrmPage = lazy(() => import("@/pages/company/Crm"));
@@ -81,6 +82,7 @@ export default function App() {
         <Route path="/company/executive" element={<ExecutiveDashboardPage />} />
         <Route path="/company/work-queue" element={<WorkQueuePage />} />
         <Route path="/company/intelligence" element={<WorkspaceIntelligencePage />} />
+        <Route path="/company/import" element={<WorkspaceImportPage />} />
         <Route path="/daily-brief" element={<DailyBriefPage />} />
         <Route path="/investments" element={<InvestmentDashboardPage />} />
         <Route path="/ideas" element={<BusinessIdeaIncubatorPage />} />

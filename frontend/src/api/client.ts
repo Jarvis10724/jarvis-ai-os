@@ -421,6 +421,13 @@ export const api = {
   listWorkRuns: (companyId?: string) =>
     apiRequest<WorkRun[]>(`/work-queue${companyId ? `?company_id=${encodeURIComponent(companyId)}` : ""}`),
 
+  // Workspace import — fill a workspace from its connected sources, streaming
+  // progress. Read-only against Shopify/Gmail/Drive.
+  importSummary: (companyId: string) =>
+    apiRequest<{ total: number; by_source: Record<string, number>; by_section: Record<string, number> }>(
+      `/workspace-import/summary?company_id=${encodeURIComponent(companyId)}`
+    ),
+
   // Workspace Intelligence — the AI's reading of a workspace + its evidence.
   getWorkspaceIntelligence: (companyId: string, refresh = false) =>
     apiRequest<WorkspaceIntelligence>(
@@ -814,6 +821,67 @@ export interface WorkEvent {
  * one event per state change (working / waiting_approval / complete) and a
  * final done. Returns an abort function.
  */
+export interface ImportEvent {
+  type: "start" | "progress" | "done" | "error";
+  source?: string;
+  message?: string;
+  imported?: number;
+  tasks?: number;
+  workspace?: string;
+  already_had?: number;
+  tasks_suggested?: number;
+  by_section?: Record<string, number>;
+  gaps?: string[];
+}
+
+/** Runs a workspace import, calling back as each source is scanned. */
+export function streamWorkspaceImport(
+  companyId: string,
+  handlers: { onEvent: (e: ImportEvent) => void; onDone: () => void; onError: (m: string) => void }
+): () => void {
+  const controller = new AbortController();
+  (async () => {
+    try {
+      const resp = await openStream(
+        `${API_BASE}/workspace-import/scan?company_id=${encodeURIComponent(companyId)}`,
+        {},
+        controller.signal
+      );
+      if (!resp.ok || !resp.body) {
+        handlers.onError(`Import failed (${resp.status}).`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line.slice(5).trim()) as ImportEvent;
+            handlers.onEvent(event);
+            if (event.type === "done") handlers.onDone();
+            if (event.type === "error") handlers.onError(event.message ?? "Import failed.");
+          } catch {
+            /* ignore malformed frame */
+          }
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        handlers.onError(err instanceof Error ? err.message : "Import stream failed.");
+      }
+    }
+  })();
+  return () => controller.abort();
+}
+
 export function streamWork(
   runId: string,
   handlers: { onEvent: (e: WorkEvent) => void; onDone: () => void; onError: (msg: string) => void }

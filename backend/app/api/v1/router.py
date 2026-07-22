@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     shopify,
     tasks,
     work_queue,
+    workspace_import,
     workspace_intelligence,
     workspaces,
 )
@@ -55,3 +56,4 @@ api_router.include_router(brand_brain.router)
 api_router.include_router(work_queue.router)
 api_router.include_router(command_center.router)
 api_router.include_router(workspace_intelligence.router)
+api_router.include_router(workspace_import.router)
