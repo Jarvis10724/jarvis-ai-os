@@ -5,6 +5,7 @@ import { api, ApiError } from "@/api/client";
 import { useProject } from "@/context/ProjectContext";
 import PanelFrame, { PanelEmpty, PanelError, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { ProjectEvent } from "@/types";
+import { useSyncedResource } from "@/context/SyncContext";
 
 function ago(iso: string | null): string {
   if (!iso) return "";
@@ -26,6 +27,10 @@ export default function TimelinePanel({ onClose }: { onClose: () => void }) {
   const load = useCallback(async () => {
     if (!activeProjectId) {
       setEvents([]);
+
+  // Re-read whenever this kind of state changes anywhere — any device,
+  // any origin (a person, an agent, an integration). No timer here.
+  useSyncedResource("projects", load);
       setLoading(false);
       return;
     }

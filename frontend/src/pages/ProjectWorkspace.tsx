@@ -19,6 +19,7 @@ import { api, ApiError } from "@/api/client";
 import ModulePageHeader from "@/components/ModulePageHeader";
 import { useToast } from "@/context/ToastContext";
 import type { ProjectOverview } from "@/types";
+import { useSyncedResource } from "@/context/SyncContext";
 
 type BucketKey =
   | "conversations"
@@ -66,6 +67,10 @@ export default function ProjectWorkspacePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Re-read whenever this kind of state changes anywhere — any device,
+  // any origin (a person, an agent, an integration). No timer here.
+  useSyncedResource("projects", load);
 
   useEffect(() => {
     load();

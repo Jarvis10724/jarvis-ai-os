@@ -7,6 +7,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { domainsForKind } from "@/lib/workspace";
 import PanelFrame, { PanelEmpty } from "@/components/shell/panels/PanelFrame";
+import { useSyncedResource } from "@/context/SyncContext";
 
 /**
  * The Workspace universe — the "this workspace is a complete AI operating
@@ -56,6 +57,10 @@ export default function WorkspacePanel({ onClose }: { onClose: () => void }) {
     setStatus(next);
     setLoading(false);
   }, [activeCompanyId]);
+
+  // Re-read whenever this kind of state changes anywhere — any device,
+  // any origin (a person, an agent, an integration). No timer here.
+  useSyncedResource("workspace", load);
 
   useEffect(() => {
     load();

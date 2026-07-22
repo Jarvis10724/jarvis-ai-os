@@ -8,6 +8,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useProject } from "@/context/ProjectContext";
 import PanelFrame, { PanelEmpty, PanelError, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { MemoryEntry } from "@/types";
+import { useSyncedResource } from "@/context/SyncContext";
 
 // AI Memory for the active workspace — defaults to the active PROJECT's memory
 // (the single source of truth), with a toggle to widen to the whole company.
@@ -42,6 +43,10 @@ export default function MemoryPanel({ onClose }: { onClose: () => void }) {
       setLoading(false);
     }
   }, [q, scope, activeCompanyId, activeProjectId]);
+
+  // Re-read whenever this kind of state changes anywhere — any device,
+  // any origin (a person, an agent, an integration). No timer here.
+  useSyncedResource("memory", load);
 
   // Re-scope on company/project switch (and scope toggle); don't refire on every keystroke.
   useEffect(() => {

@@ -8,6 +8,7 @@ import { useProject } from "@/context/ProjectContext";
 import { SEVERITY_ICON, SEVERITY_STYLES } from "@/components/NotificationsPanel";
 import PanelFrame, { PanelEmpty, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { NotificationItem } from "@/types";
+import { useSyncedResource } from "@/context/SyncContext";
 
 // Internal: carry a sortable timestamp alongside the display item.
 type Note = NotificationItem & { _ts: string | null };
@@ -39,6 +40,10 @@ export default function NotificationsCenter({ onClose }: { onClose: () => void }
         api.listAgentRuns({ companyId: activeCompanyId ?? "none" }).catch(() => []),
         activeProjectId ? api.getProjectTimeline(activeProjectId, 20).catch(() => []) : Promise.resolve([]),
       ]);
+
+  // Re-read whenever this kind of state changes anywhere — any device,
+  // any origin (a person, an agent, an integration). No timer here.
+  useSyncedResource("notifications", load);
 
       const notes: Note[] = [];
 

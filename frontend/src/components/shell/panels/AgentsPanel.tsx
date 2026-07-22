@@ -7,6 +7,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import PanelFrame, { PanelEmpty, PanelError, PanelLoading } from "@/components/shell/panels/PanelFrame";
 import type { Agent, AgentRun, AgentRunStatus } from "@/types";
+import { useSyncedResource } from "@/context/SyncContext";
 
 const STATUS_STYLES: Record<AgentRunStatus, string> = {
   queued: "text-jarvis-muted border-jarvis-border bg-jarvis-panel2/40",
@@ -40,6 +41,10 @@ export default function AgentsPanel({ onClose }: { onClose: () => void }) {
         api.listAgents(),
         api.listAgentRuns({ companyId: activeCompanyId ?? "none" }),
       ]);
+
+  // Re-read whenever this kind of state changes anywhere — any device,
+  // any origin (a person, an agent, an integration). No timer here.
+  useSyncedResource("agents", load);
       setAgents(roster);
       setRuns(runList);
       setLaunchKey((k) => k || roster[0]?.key || "");
