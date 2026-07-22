@@ -17,6 +17,7 @@ const PluginsPage = lazy(() => import("@/pages/Plugins"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
 const AmazonLaunchCenterPage = lazy(() => import("@/pages/company/AmazonLaunch"));
 const BrandBrainPage = lazy(() => import("@/pages/company/BrandBrain"));
+const ExecutiveDashboardPage = lazy(() => import("@/pages/company/ExecutiveDashboard"));
 const CompanyDashboardPage = lazy(() => import("@/pages/company/CompanyDashboard"));
 const ContentCalendarPage = lazy(() => import("@/pages/company/ContentCalendar"));
 const CrmPage = lazy(() => import("@/pages/company/Crm"));
@@ -75,6 +76,7 @@ export default function App() {
         <Route path="/company/website-builder" element={<WebsiteBuilderPage />} />
         <Route path="/company/amazon-launch" element={<AmazonLaunchCenterPage />} />
         <Route path="/company/brand-brain" element={<BrandBrainPage />} />
+        <Route path="/company/executive" element={<ExecutiveDashboardPage />} />
         <Route path="/daily-brief" element={<DailyBriefPage />} />
         <Route path="/investments" element={<InvestmentDashboardPage />} />
         <Route path="/ideas" element={<BusinessIdeaIncubatorPage />} />
