@@ -8,7 +8,7 @@ import type { Company } from "@/types";
  * Investment/market modules (Stocks, Market News, the Investment Dashboard) are
  * reserved for businesses that actually do investing — detected from the
  * company's own profile (its industry or divisions). e.g. Greener Capitol
- * Solutions LLC carries an "Investing" division and shows them; SNP Group LLC
+ * Solutions LLC carries an "Investing" division and shows them; SPN Group LLC
  * (Consumer Goods / Primal Penni) does not.
  */
 export function showsInvestments(company: Company | null | undefined): boolean {

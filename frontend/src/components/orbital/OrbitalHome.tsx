@@ -286,7 +286,7 @@ export default function OrbitalHome() {
         onClick: () => openNotifications(),
       },
       // Stocks / market module — only for investment-oriented workspaces
-      // (e.g. Greener Capitol), hidden for SNP Group LLC.
+      // (e.g. Greener Capitol), hidden for SPN Group LLC.
       ...(showsInvestments(activeCompany)
         ? [
             {

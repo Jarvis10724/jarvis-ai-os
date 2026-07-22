@@ -6,7 +6,7 @@ login — it never touches production data, never connects Shopify, and never
 sends email (registration only stores a local hashed password).
 
   Login:    hello@primalpennicollective.com  /  <DEMO_PASSWORD below>
-  Company:  SNP Group LLC   (first DBA: "Primal Penni")
+  Company:  SPN Group LLC   (first DBA: "Primal Penni")
   Projects: "Primal Penni Product Landing Page"  <- reliable, completed build
             + a couple more so active-project switching is demonstrable
   Plus:     realistic products, AI memories, a company Daily Brief, an approved
@@ -45,7 +45,7 @@ DEMO_EMAIL = "hello@primalpennicollective.com"
 # the environment (set DEMO_PASSWORD before seeding), with a harmless
 # placeholder default that should be overridden.
 DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "changeme-demo-password")
-COMPANY_NAME = "SNP Group LLC"
+COMPANY_NAME = "SPN Group LLC"
 DBA = "Primal Penni"
 SHOWCASE_PROJECT = "Primal Penni Product Landing Page"
 
@@ -96,7 +96,7 @@ footer{text-align:center;padding:28px;color:var(--muted);font-size:13px;font-fam
 <section class="quote">"The only serum that survived my whole skincare-minimalism phase." — Verified buyer</section>
 <section class="cta"><div class="pill">Ready when you are</div><h1 style="font-size:32px;margin-bottom:14px">Start your evening ritual</h1>
 <a class="btn" href="#">Shop Copper Glow Serum</a></section>
-<footer>© Primal Penni, a DBA of SNP Group LLC · Demo preview</footer>
+<footer>© Primal Penni, a DBA of SPN Group LLC · Demo preview</footer>
 </body></html>"""
 
 HERO_SVG = (
@@ -132,7 +132,7 @@ def _build_state() -> dict:
         "mode": "new",
         "_company": "Primal Penni",
         "requirements": {
-            "business": "Primal Penni — small-batch, copper-infused clean skincare (DBA of SNP Group LLC)",
+            "business": "Primal Penni — small-batch, copper-infused clean skincare (DBA of SPN Group LLC)",
             "goal": "A single-page product landing page for the Copper Glow Serum that converts.",
             "audience": "Skincare-minimalist millennials who value clean, cruelty-free products.",
             "tone": "Warm, earthy, premium.",
@@ -211,13 +211,13 @@ def main() -> None:
             db.flush()
             created.append(f"user {DEMO_EMAIL}")
 
-        # 2) SNP Group LLC company with Primal Penni as its first DBA.
+        # 2) SPN Group LLC company with Primal Penni as its first DBA.
         company = db.query(Company).filter(Company.owner_id == user.id, Company.name == COMPANY_NAME).first()
         if not company:
             company = Company(
                 owner_id=user.id,
                 name=COMPANY_NAME,
-                tagline="Clean, small-batch consumer brands — DEMO workspace",
+                tagline="Clean, small-batch consumer brands",
                 industry="Consumer Goods",
                 website="https://primalpennicollective.com",
                 company_type="consumer-brands",
@@ -230,7 +230,7 @@ def main() -> None:
             divs = json.loads(company.divisions_json or "[]")
             if DBA not in divs:
                 company.divisions_json = json.dumps([DBA, *divs])
-        # Structured workspace metadata — SNP is an operating consumer-brands
+        # Structured workspace metadata — SPN is an operating consumer-brands
         # workspace (drives its module set, branding, and AI behavior by data,
         # not by name). Set idempotently so an existing demo row is upgraded.
         if company.company_type != "consumer-brands":
@@ -340,7 +340,7 @@ def main() -> None:
                 owner_id=user.id, company_id=company.id, scope="company", kind="fact",
                 source="daily_briefing", title=f"Daily Briefing — {datetime.now(timezone.utc).date().isoformat()}",
                 content=(
-                    "Good morning — SNP Group LLC (Primal Penni)\n\n"
+                    "Good morning — SPN Group LLC (Primal Penni)\n\n"
                     "• Copper Glow Serum landing page is built and ready to review in Projects → "
                     "Primal Penni Product Landing Page.\n"
                     "• Inventory healthy: Copper Glow Serum 320 units, Renewal Night Cream 210.\n"

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, FolderKanban, Plus } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 
 import { useProject } from "@/context/ProjectContext";
@@ -11,10 +11,11 @@ import { ApiError } from "@/api/client";
 
 // The active-project picker for the current business. Sits directly under the
 // CompanySwitcher: pick which shared Project every Quick Action attaches to.
-export default function ProjectSwitcher() {
+export default function ProjectSwitcher({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { projects, activeProject, activeProjectId, setActiveProjectId, createProject, loading } =
     useProject();
   const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
   const prompt = usePrompt();
   const toast = useToast();
   const navigate = useNavigate();
@@ -106,12 +107,20 @@ export default function ProjectSwitcher() {
         )}
       </AnimatePresence>
 
-      <button
-        onClick={() => navigate(`/projects/${activeProject.id}`)}
-        className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] font-medium text-jarvis-muted transition-colors duration-150 hover:text-jarvis-cyan"
-      >
-        Open Project Workspace →
-      </button>
+      {/* Hidden when you're already in this project's workspace — an inert
+          control. Closes the mobile drawer on the way so the workspace it
+          opens isn't left underneath it. */}
+      {pathname !== `/projects/${activeProject.id}` && (
+        <button
+          onClick={() => {
+            navigate(`/projects/${activeProject.id}`);
+            onNavigate?.();
+          }}
+          className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] font-medium text-jarvis-muted transition-colors duration-150 hover:text-jarvis-cyan"
+        >
+          Open Project Workspace →
+        </button>
+      )}
     </div>
   );
 }

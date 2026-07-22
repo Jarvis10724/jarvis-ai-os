@@ -48,8 +48,8 @@ export default function MobileNav({ open, onClose }: { open: boolean; onClose: (
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <CompanySwitcher />
-            <ProjectSwitcher />
+            <CompanySwitcher onNavigate={onClose} />
+            <ProjectSwitcher onNavigate={onClose} />
             {/* Workspace universe — the workspace as a complete AI operating
                 environment (identity + every domain with live status). */}
             {activeCompany && (

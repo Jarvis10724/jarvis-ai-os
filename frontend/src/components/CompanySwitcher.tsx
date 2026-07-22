@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, Plus, Sparkles } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import clsx from "clsx";
 
 import { useCompany } from "@/context/CompanyContext";
@@ -9,10 +9,14 @@ import { usePrompt } from "@/context/PromptContext";
 import { useToast } from "@/context/ToastContext";
 import { ApiError } from "@/api/client";
 
-export default function CompanySwitcher() {
+export default function CompanySwitcher({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { companies, activeCompany, activeCompanyId, setActiveCompanyId, createCompany, loading } =
     useCompany();
   const [open, setOpen] = useState(false);
+  // Hidden when it would do nothing — a link to the page you're already on is
+  // an inert control, and inside the mobile drawer it has to close the drawer
+  // or the destination stays hidden behind it.
+  const onCompanyProfile = useLocation().pathname === "/company";
   const prompt = usePrompt();
   const toast = useToast();
 
@@ -100,17 +104,15 @@ export default function CompanySwitcher() {
         )}
       </AnimatePresence>
 
-      <NavLink
-        to="/company"
-        className={({ isActive }) =>
-          clsx(
-            "mt-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150",
-            isActive ? "text-jarvis-cyan" : "text-jarvis-muted hover:text-jarvis-text"
-          )
-        }
-      >
-        View Company Profile →
-      </NavLink>
+      {!onCompanyProfile && (
+        <NavLink
+          to="/company"
+          onClick={onNavigate}
+          className="mt-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-jarvis-muted transition-colors duration-150 hover:text-jarvis-text"
+        >
+          View Company Profile →
+        </NavLink>
+      )}
     </div>
   );
 }

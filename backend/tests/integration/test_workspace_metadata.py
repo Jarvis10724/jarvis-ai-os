@@ -20,7 +20,7 @@ def test_company_type_round_trips_on_create_and_read(client):
     headers = _login(client, "wm-type@example.com")
     resp = client.post(
         f"{API}/companies",
-        json={"name": "SNP Group LLC", "industry": "Consumer Goods", "company_type": "consumer-brands"},
+        json={"name": "SPN Group LLC", "industry": "Consumer Goods", "company_type": "consumer-brands"},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
