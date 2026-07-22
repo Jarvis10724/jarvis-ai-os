@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Check, CircleDashed, ListChecks, Loader2, Play, ShieldCheck, Sparkles } from "lucide-react";
 
 import { api, ApiError, streamWork, type WorkEvent } from "@/api/client";
@@ -28,6 +28,7 @@ export default function WorkQueuePage() {
   const { activeCompany, activeCompanyId } = useCompany();
   const toast = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [input, setInput] = useState("");
   const [run, setRun] = useState<WorkRun | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -69,16 +70,16 @@ export default function WorkQueuePage() {
     });
   }, []);
 
-  function start() {
-    if (!run || running) return;
+  function startRun(target: WorkRun) {
+    if (running) return;
     setRunning(true);
-    abortRef.current = streamWork(run.id, {
+    abortRef.current = streamWork(target.id, {
       onEvent: applyEvent,
       onDone: async () => {
         setRunning(false);
         // Pull final results (subtask work products) once the stream ends.
         try {
-          setRun(await api.getWorkRun(run.id));
+          setRun(await api.getWorkRun(target.id));
         } catch {
           /* keep streamed state */
         }
@@ -89,6 +90,35 @@ export default function WorkQueuePage() {
       },
     });
   }
+
+  function start() {
+    if (run) startRun(run);
+  }
+
+  // Command Center handoff: ?run=<id> opens a plan Jarvis already made, and
+  // autorun=1 starts executing it immediately (the user already asked for the
+  // work — real-world steps still stop for approval). Consumed once.
+  // Deferred a beat (and cancelled on cleanup) so React's dev double-mount
+  // doesn't abort the stream it just started.
+  const handoffRef = useRef(false);
+  useEffect(() => {
+    const id = searchParams.get("run");
+    if (!id || handoffRef.current) return;
+    const autorun = searchParams.get("autorun") === "1";
+    const timer = setTimeout(() => {
+      handoffRef.current = true;
+      setSearchParams({}, { replace: true });
+      api
+        .getWorkRun(id)
+        .then((loaded) => {
+          setRun(loaded);
+          if (autorun && loaded.status === "planned") startRun(loaded);
+        })
+        .catch(() => toast.push("Couldn't open that work run.", "error"));
+    }, 200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   if (!activeCompanyId) {
     return (

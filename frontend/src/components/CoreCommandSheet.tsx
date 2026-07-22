@@ -1,26 +1,45 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { CornerDownLeft, ExternalLink, SquarePen, Wrench, X } from "lucide-react";
+import { Compass, CornerDownLeft, ExternalLink, SquarePen, Wrench, X } from "lucide-react";
 
 import { api, ApiError } from "@/api/client";
-import JarvisCore from "@/components/JarvisCore";
+import JarvisCore, { type JarvisCoreState } from "@/components/JarvisCore";
 import { useCompany } from "@/context/CompanyContext";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useCoreState } from "@/hooks/useCoreState";
-import type { ChatMessage, ToolCallLog } from "@/types";
+import type { ChatMessage, CommandDecision, ToolCallLog } from "@/types";
 
 const PERSONA_KEY = "jarvis_active_persona";
 
+// A routed turn carries the decision that produced it, so the thread shows
+// which subsystem handled each request (and lets you jump back to it).
+type DeckMessage = ChatMessage & { decision?: CommandDecision };
+
+// The Core's state mirrors the kind of work the destination implies, so the orb
+// communicates what Jarvis is actually doing — not just "thinking".
+const CORE_STATE_FOR: Record<string, JarvisCoreState> = {
+  deep_research: "researching",
+  web_builder: "generating",
+  logo_design: "generating",
+  product_creation: "generating",
+  code_writer: "generating",
+  automation: "generating",
+  work_queue: "generating",
+};
+
+// Give the user a beat to read what Jarvis decided before the screen changes.
+const HANDOFF_MS = 850;
+
 /**
- * The AI Core as the central brain — a global "command Jarvis" surface reachable
- * from every screen (not just Home). It drives the SAME real chat/capability
- * pipeline the Chat page uses (api.chat → memory + tools + approval-gated
- * actions), scoped to the active workspace, and the Core visibly reflects live
- * state (idle / thinking / waiting-for-approval). This is functional, not
- * decorative: you can ask a question or issue a command from anywhere and Jarvis
- * actually answers and can act (surfacing the tools it ran).
+ * The AI Command Center (Phase 3) — the primary way to command Jarvis, reachable
+ * from every screen. You never pick a tool: every request is ROUTED
+ * automatically (POST /command-center/route) to the subsystem that should handle
+ * it — a studio Quick Action, the chat pipeline (memory + tools + approval-gated
+ * actions), the Work Queue for multi-step work, or the surface that answers it —
+ * and Jarvis says what it's doing while it works, with live status on the Core.
+ * The thread is per workspace and persistent, so routing keeps context.
  */
 export default function CoreCommandSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { activeCompany, activeCompanyId } = useCompany();
@@ -29,8 +48,11 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   const coreState = useCoreState();
   const navigate = useNavigate();
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<DeckMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  // What Jarvis is doing right now, in the destination's own words
+  // ("Researching…", "Building…", "Waiting for approval…").
+  const [liveStatus, setLiveStatus] = useState("Thinking…");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -40,7 +62,7 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   useEffect(() => {
     try {
       const saved = localStorage.getItem(threadKey);
-      setMessages(saved ? (JSON.parse(saved) as ChatMessage[]) : []);
+      setMessages(saved ? (JSON.parse(saved) as DeckMessage[]) : []);
     } catch {
       setMessages([]);
     }
@@ -75,9 +97,7 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || busy) return;
+  async function runChat(history: DeckMessage[], decision: CommandDecision) {
     const persona = (() => {
       try {
         return localStorage.getItem(PERSONA_KEY) || "ceo_assistant";
@@ -85,20 +105,100 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
         return "ceo_assistant";
       }
     })();
-    const next: ChatMessage[] = [...messages, { role: "user", content: text }];
+    // Send only the wire shape (role/content) — routing metadata is UI-local.
+    const res = await api.chat(
+      history.map((m) => ({ role: m.role, content: m.content })),
+      activeCompanyId,
+      persona
+    );
+    setMessages([...history, { role: "assistant", content: res.text, toolCalls: res.tool_calls, decision }]);
+  }
+
+  /**
+   * One request in, the right subsystem out. Route first, then act on the
+   * decision — no manual tool picking, and the same approval-gated pipelines
+   * underneath.
+   */
+  async function send() {
+    const text = input.trim();
+    if (!text || busy) return;
+    const next: DeckMessage[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setInput("");
     setBusy(true);
     setStatus("thinking");
+    setLiveStatus("Thinking…");
+
+    let decision: CommandDecision;
     try {
-      const res = await api.chat(next, activeCompanyId, persona);
-      setMessages([...next, { role: "assistant", content: res.text, toolCalls: res.tool_calls }]);
+      decision = await api.routeCommand(
+        text,
+        activeCompanyId,
+        next.slice(-6).map((m) => ({ role: m.role, content: m.content }))
+      );
+    } catch {
+      // Routing is best-effort: if it's unavailable, still answer via chat.
+      decision = {
+        destination: "chat",
+        label: "Chat",
+        mode: "chat",
+        target: null,
+        status: "Thinking…",
+        explanation: "",
+        clarifying_question: null,
+      };
+    }
+    setLiveStatus(decision.status);
+    setStatus(CORE_STATE_FOR[decision.destination] ?? "thinking");
+
+    try {
+      // Only asked when routing genuinely can't proceed — otherwise Jarvis
+      // assumes and acts.
+      if (decision.clarifying_question) {
+        setMessages([...next, { role: "assistant", content: decision.clarifying_question, decision }]);
+        return;
+      }
+
+      if (decision.mode === "chat") {
+        await runChat(next, decision);
+        return;
+      }
+
+      if (decision.mode === "work_queue") {
+        setLiveStatus("Planning…");
+        const run = await api.createWorkPlan(text, activeCompanyId);
+        const steps = run.subtasks.map((s, i) => `${i + 1}. ${s.title}`).join("\n");
+        setMessages([
+          ...next,
+          {
+            role: "assistant",
+            content: `${decision.explanation}\n\nHere's the plan — I'll work through it and stop for your approval on anything with real-world consequences:\n${steps}`,
+            decision,
+          },
+        ]);
+        // Hand off to the Work Queue, which runs the steps in sequence live.
+        setTimeout(() => goto(`/company/work-queue?run=${run.id}&autorun=1`), HANDOFF_MS);
+        return;
+      }
+
+      // studio / navigate — explain, then hand off to the surface that does it.
+      // Studio picks the request up from `ask` and starts the work immediately.
+      const path =
+        decision.mode === "studio"
+          ? `/studio/${decision.target}?ask=${encodeURIComponent(text)}`
+          : decision.target ?? "/";
+      setMessages([
+        ...next,
+        { role: "assistant", content: `${decision.explanation} Opening ${decision.label}…`, decision },
+      ]);
+      setTimeout(() => goto(path), HANDOFF_MS);
     } catch (err) {
       setMessages([
         ...next,
         {
           role: "assistant",
           content: err instanceof ApiError ? err.message : "Couldn't reach Jarvis. Check the AI provider key in .env.",
+          decision,
         },
       ]);
     } finally {
@@ -162,8 +262,9 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
               {messages.length === 0 && (
                 <div className="flex flex-col items-center gap-2 py-8 text-center">
                   <p className="text-sm text-jarvis-muted">
-                    Ask anything about {activeCompany?.name ?? "your workspace"} — products, tasks, emails, or
-                    tell Jarvis to do something. It uses this workspace's memory and can act (with your approval).
+                    Just say what you need for {activeCompany?.name ?? "your workspace"} — build a landing page,
+                    research competitors, create a task, summarize email. Jarvis picks the right tool itself,
+                    uses this workspace's memory, and asks approval before anything real-world.
                   </p>
                 </div>
               )}
@@ -177,6 +278,9 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
                           : "max-w-[85%] rounded-2xl rounded-bl-sm border border-jarvis-border/50 bg-jarvis-panel/60 px-3.5 py-2 text-sm text-jarvis-text"
                       }
                     >
+                      {m.role === "assistant" && m.decision && m.decision.destination !== "chat" && (
+                        <RouteChip decision={m.decision} onNavigate={goto} />
+                      )}
                       <p className="whitespace-pre-wrap">{m.content}</p>
                       {m.toolCalls && m.toolCalls.length > 0 && (
                         <ToolCalls calls={m.toolCalls} onNavigate={goto} />
@@ -186,7 +290,7 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
                 ))}
                 {busy && (
                   <div className="flex items-center gap-2 text-xs text-jarvis-muted">
-                    <JarvisCore state="thinking" size={20} /> Thinking…
+                    <JarvisCore state={coreState} size={20} /> {liveStatus}
                   </div>
                 )}
                 <div ref={bottomRef} />
@@ -225,6 +329,28 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+/** Shows which subsystem handled a request — and gets you back to it. */
+function RouteChip({ decision, onNavigate }: { decision: CommandDecision; onNavigate: (path: string) => void }) {
+  const path =
+    decision.mode === "studio" ? `/studio/${decision.target}` : decision.target ?? null;
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold">
+      <Compass className="h-3 w-3 shrink-0" style={{ color: "var(--ws-accent)" }} />
+      {path ? (
+        <button
+          onClick={() => onNavigate(path)}
+          className="flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-jarvis-panel2/60"
+          style={{ color: "var(--ws-accent)" }}
+        >
+          {decision.label} <ExternalLink className="h-3 w-3" />
+        </button>
+      ) : (
+        <span style={{ color: "var(--ws-accent)" }}>{decision.label}</span>
+      )}
+    </div>
   );
 }
 

@@ -790,6 +790,23 @@ export interface WorkRun {
   created_at: string | null;
 }
 
+// AI Command Center (Phase 3) — the router's decision about which subsystem
+// should handle a request. `mode` tells the UI HOW to act on it:
+//   studio     → open the Quick Action workspace `target` (/studio/<target>)
+//   chat       → answer/act inline through the normal chat pipeline
+//   navigate   → go to the surface at `target`
+//   work_queue → plan the request into subtasks and run them in sequence
+export type CommandMode = "studio" | "chat" | "navigate" | "work_queue";
+export interface CommandDecision {
+  destination: string;
+  label: string;
+  mode: CommandMode;
+  target: string | null;
+  status: string; // live status label, e.g. "Researching…"
+  explanation: string;
+  clarifying_question: string | null;
+}
+
 export interface BrandBrainSyncResult {
   synced_at: string;
   store_name: string | null;

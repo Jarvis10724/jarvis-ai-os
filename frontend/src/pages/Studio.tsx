@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Archive,
   ArchiveRestore,
@@ -59,6 +59,7 @@ type RightTab = "workspace" | "deliverables" | "tasks";
 
 export default function StudioPage() {
   const { action = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const meta = QUICK_ACTIONS.find((a) => a.pluginName === action);
   const { activeCompany, activeCompanyId } = useCompany();
   const { activeProjectId } = useProject();
@@ -165,6 +166,27 @@ export default function StudioPage() {
   // Cancel any in-flight stream on unmount / switching away.
   useEffect(() => () => abortRef.current?.(), []);
 
+  // Command Center handoff: arriving with ?ask=… means Jarvis routed a request
+  // here, so start a fresh session and get to work immediately — the user
+  // shouldn't have to retype what they already asked for. Consumed once (the
+  // param is stripped) so a reload doesn't re-run the request.
+  // Deferred a beat (and cancelled on cleanup) so React's dev double-mount
+  // doesn't abort the stream it just started — the discarded pass clears its
+  // own timer, and only the surviving mount actually sends.
+  const askedRef = useRef(false);
+  useEffect(() => {
+    const ask = searchParams.get("ask");
+    if (!ask || askedRef.current || loadingList) return;
+    const timer = setTimeout(async () => {
+      askedRef.current = true;
+      setSearchParams({}, { replace: true });
+      const created = await newSession();
+      if (created) sendMessage(ask, created.config?.stages[0]?.state_key ?? "", created);
+    }, 200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, loadingList]);
+
   useEffect(() => {
     requestAnimationFrame(() =>
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -209,11 +231,13 @@ export default function StudioPage() {
     }
   }
 
-  async function sendMessage(rawContent: string, stage: string) {
+  // `sessionOverride` lets a caller that just created a session send into it
+  // without waiting for the `detail` state to flush (Command Center handoff).
+  async function sendMessage(rawContent: string, stage: string, sessionOverride?: WorkspaceDetail | null) {
     const content = rawContent.trim();
     if (!content || streaming) return;
 
-    let session = detail;
+    let session = sessionOverride ?? detail;
     if (!session) {
       session = await newSession();
       if (!session) return;

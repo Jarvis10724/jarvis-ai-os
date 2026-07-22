@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     capabilities,
     chat,
     clients,
+    command_center,
     company,
     dashboard,
     drive,
@@ -51,3 +52,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(shopify.router)
 api_router.include_router(brand_brain.router)
 api_router.include_router(work_queue.router)
+api_router.include_router(command_center.router)

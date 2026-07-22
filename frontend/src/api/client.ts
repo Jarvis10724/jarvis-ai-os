@@ -40,6 +40,7 @@ import type {
   BrandProduct,
   BrandCollection,
   BrandBrainSyncResult,
+  CommandDecision,
   WorkRun,
   WorkspaceArtifact,
   WorkspaceConfig,
@@ -415,6 +416,14 @@ export const api = {
   getWorkRun: (id: string) => apiRequest<WorkRun>(`/work-queue/${id}`),
   listWorkRuns: (companyId?: string) =>
     apiRequest<WorkRun[]>(`/work-queue${companyId ? `?company_id=${encodeURIComponent(companyId)}` : ""}`),
+
+  // AI Command Center — decide which subsystem should handle a request, so
+  // "Ask Jarvis" routes itself instead of making the user pick a tool.
+  routeCommand: (request: string, companyId?: string | null, history?: { role: string; content: string }[]) =>
+    apiRequest<CommandDecision>("/command-center/route", {
+      method: "POST",
+      body: { request, company_id: companyId ?? null, history: history ?? null },
+    }),
 
   // Quick-Action workspaces — persistent, streaming "studio" sessions.
   listWorkspaceActions: () => apiRequest<WorkspaceConfig[]>("/workspaces/actions"),
