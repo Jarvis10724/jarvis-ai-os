@@ -29,7 +29,7 @@ export default function TopNav({
   const { dark, toggleDark } = useTheme();
   const { activeCompany, activeCompanyId } = useCompany();
   const workspace = useWorkspace();
-  const { openCoreCommand } = useDashboardUI();
+  const { openCoreCommand, openWorkspaceSwitcher } = useDashboardUI();
   const coreState = useCoreState();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -88,13 +88,14 @@ export default function TopNav({
         <span className="hidden text-xs font-semibold text-jarvis-text sm:inline">Ask Jarvis</span>
       </button>
 
-      {/* Active-workspace chip — mobile-first, so the current company (and its
-          brand/DBA) is obvious on every screen, not just the home. Tapping it
-          opens the workspace nav. */}
+      {/* Active-workspace chip — present on every screen (its monogram + name +
+          DBA), and tapping it opens the global workspace switcher for a fast,
+          state-preserving switch between businesses. */}
       {activeCompany && (
         <button
-          onClick={onOpenMobileNav}
-          className="press-scale flex min-w-0 flex-1 items-center gap-2 rounded-xl border py-1.5 pl-2 pr-3 text-left transition sm:hidden"
+          onClick={openWorkspaceSwitcher}
+          title="Switch workspace"
+          className="press-scale flex min-w-0 flex-1 items-center gap-2 rounded-xl border py-1.5 pl-2 pr-3 text-left transition sm:max-w-[220px] sm:flex-none"
           style={{ borderColor: "var(--ws-accent-soft)", backgroundColor: "var(--ws-accent-faint)" }}
         >
           <span

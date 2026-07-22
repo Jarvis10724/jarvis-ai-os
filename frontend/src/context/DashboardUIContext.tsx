@@ -14,6 +14,8 @@ interface DashboardUIContextValue {
   // The AI Core "command Jarvis" sheet — the central-brain entry, reachable
   // from any screen (the Core orb in the top bar).
   openCoreCommand: () => void;
+  // Global workspace switcher — reachable from the top bar on every screen.
+  openWorkspaceSwitcher: () => void;
   // Right dock
   activePanel: DockPanel | null;
   openPanel: (panel: DockPanel) => void;

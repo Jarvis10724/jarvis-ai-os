@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import CommandPalette from "@/components/CommandPalette";
 import CoreCommandSheet from "@/components/CoreCommandSheet";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import MobileNav from "@/components/MobileNav";
 import QuickActions from "@/components/QuickActions";
 import RadialNav from "@/components/RadialNav";
@@ -26,6 +27,7 @@ export default function DashboardShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [coreCommandOpen, setCoreCommandOpen] = useState(false);
+  const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const location = useLocation();
 
   // Shell mounts once now, so this fires once per real app-open rather than
@@ -52,6 +54,7 @@ export default function DashboardShell() {
         openQuickActions: () => setQuickActionsOpen(true),
         openCommandPalette: () => setCommandPaletteOpen(true),
         openCoreCommand: () => setCoreCommandOpen(true),
+        openWorkspaceSwitcher: () => setWorkspaceSwitcherOpen(true),
       }}
     >
       <div className="flex h-screen w-screen overflow-hidden bg-jarvis-bg bg-grid-pattern bg-grid">
@@ -113,6 +116,7 @@ export default function DashboardShell() {
         <QuickActions open={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} />
         <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
         <CoreCommandSheet open={coreCommandOpen} onClose={() => setCoreCommandOpen(false)} />
+        <WorkspaceSwitcher open={workspaceSwitcherOpen} onClose={() => setWorkspaceSwitcherOpen(false)} />
       </div>
     </DashboardUIProvider>
   );
