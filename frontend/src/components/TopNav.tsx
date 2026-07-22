@@ -4,9 +4,12 @@ import { Bell, LogOut, Menu, Moon, Search, Sun, Zap } from "lucide-react";
 import clsx from "clsx";
 
 import { api } from "@/api/client";
+import JarvisCore from "@/components/JarvisCore";
 import { useAuth } from "@/context/AuthContext";
 import { useCompany } from "@/context/CompanyContext";
+import { useDashboardUI } from "@/context/DashboardUIContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useCoreState } from "@/hooks/useCoreState";
 import { useWorkspace } from "@/hooks/useWorkspace";
 
 interface TopNavProps {
@@ -26,6 +29,8 @@ export default function TopNav({
   const { dark, toggleDark } = useTheme();
   const { activeCompany, activeCompanyId } = useCompany();
   const workspace = useWorkspace();
+  const { openCoreCommand } = useDashboardUI();
+  const coreState = useCoreState();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
 
@@ -68,6 +73,19 @@ export default function TopNav({
         className="press-scale flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-jarvis-muted transition hover:bg-jarvis-panel2/60 hover:text-jarvis-text md:hidden"
       >
         <Menu className="h-5 w-5" />
+      </button>
+
+      {/* AI Core — the central brain, present on every screen. Tap to command
+          Jarvis (real chat/AI pipeline); the orb reflects live state
+          (idle/thinking/waiting-for-approval). */}
+      <button
+        onClick={openCoreCommand}
+        title="Ask Jarvis — command the AI Core"
+        aria-label="Ask Jarvis"
+        className="press-scale flex shrink-0 items-center gap-2 rounded-xl border border-jarvis-border/60 bg-jarvis-panel2/40 py-1 pl-1 pr-2.5 transition hover:border-[color:var(--ws-accent-soft)] sm:pr-3"
+      >
+        <JarvisCore state={coreState} size={30} />
+        <span className="hidden text-xs font-semibold text-jarvis-text sm:inline">Ask Jarvis</span>
       </button>
 
       {/* Active-workspace chip — mobile-first, so the current company (and its

@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 
 import CommandPalette from "@/components/CommandPalette";
+import CoreCommandSheet from "@/components/CoreCommandSheet";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import MobileNav from "@/components/MobileNav";
 import QuickActions from "@/components/QuickActions";
@@ -24,6 +25,7 @@ export default function DashboardShell() {
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [coreCommandOpen, setCoreCommandOpen] = useState(false);
   const location = useLocation();
 
   // Shell mounts once now, so this fires once per real app-open rather than
@@ -49,6 +51,7 @@ export default function DashboardShell() {
         openNotifications: () => setActivePanel("notifications"),
         openQuickActions: () => setQuickActionsOpen(true),
         openCommandPalette: () => setCommandPaletteOpen(true),
+        openCoreCommand: () => setCoreCommandOpen(true),
       }}
     >
       <div className="flex h-screen w-screen overflow-hidden bg-jarvis-bg bg-grid-pattern bg-grid">
@@ -109,6 +112,7 @@ export default function DashboardShell() {
 
         <QuickActions open={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} />
         <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+        <CoreCommandSheet open={coreCommandOpen} onClose={() => setCoreCommandOpen(false)} />
       </div>
     </DashboardUIProvider>
   );

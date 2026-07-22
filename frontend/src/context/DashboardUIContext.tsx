@@ -11,6 +11,9 @@ export type DockPanel = "workspace" | "notifications" | "timeline" | "memory" | 
 interface DashboardUIContextValue {
   openQuickActions: () => void;
   openCommandPalette: () => void;
+  // The AI Core "command Jarvis" sheet — the central-brain entry, reachable
+  // from any screen (the Core orb in the top bar).
+  openCoreCommand: () => void;
   // Right dock
   activePanel: DockPanel | null;
   openPanel: (panel: DockPanel) => void;
