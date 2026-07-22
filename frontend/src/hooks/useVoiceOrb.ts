@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-import { api, ApiError } from "@/api/client";
 import { useAudioLevel } from "@/hooks/useAudioLevel";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { appendTurn, loadThread, routeAndExecute } from "@/lib/commandRouter";
 import type { JarvisCoreState } from "@/components/JarvisCore";
-import type { ChatMessage } from "@/types";
 
 // Every state the voice orb can be in — a superset of JarvisCoreState with
 // the extra lifecycle/error states the spec asks to surface explicitly.
@@ -37,8 +37,6 @@ export function toCoreState(v: VoiceState): JarvisCoreState {
   }
 }
 
-const PERSONA_STORAGE_KEY = "jarvis_active_persona";
-
 interface UseVoiceOrbArgs {
   companyId: string | null;
   /** Push mapped state to the global sidebar orb (AssistantStatusContext). */
@@ -64,6 +62,8 @@ interface UseVoiceOrbReturn {
   lastReplyText: string;
   /** Human-readable error/status detail for the current state, if any. */
   detail: string | null;
+  /** The router's live status for the current request ("Researching…"), if any. */
+  liveStatus: string | null;
   /** Push-to-talk toggle: start if idle, stop if listening. */
   toggle: () => void;
   /** Explicit stop (used by keyboard release). */
@@ -93,18 +93,26 @@ const DETAIL: Partial<Record<VoiceState, string>> = {
 /**
  * The engine behind the AI Core acting as Jarvis's voice button. Combines a
  * live audio-level meter (useAudioLevel), browser speech recognition
- * (useSpeechRecognition), speech synthesis (useSpeechSynthesis) and the chat
- * API into one push-to-talk state machine. Single-utterance per turn: press
- * to talk, press again (or release the key) to send. No wake word, no
- * always-on listening — capture only happens between an explicit start and
- * stop. No secrets touch this layer; it calls the same authenticated /chat
- * endpoint the text UI uses.
+ * (useSpeechRecognition), speech synthesis (useSpeechSynthesis) and the AI
+ * Command Router into one push-to-talk state machine. Single-utterance per
+ * turn: press to talk, press again (or release the key) to send. No wake word,
+ * no always-on listening — capture only happens between an explicit start and
+ * stop.
+ *
+ * Voice does NOT have its own intelligence: every utterance goes through
+ * `routeAndExecute` (lib/commandRouter), the same pipeline the typed Command
+ * Center uses, so speaking can reach any subsystem and real-world actions stay
+ * approval-gated. No secrets touch this layer.
  */
 export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbArgs): UseVoiceOrbReturn {
   const [phase, setPhase] = useState<VoiceState>("idle");
   const [lastUserText, setLastUserText] = useState("");
   const [lastReplyText, setLastReplyText] = useState("");
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  // The router's live status for the current utterance ("Researching…",
+  // "Building…"), so the console says what Jarvis is actually doing.
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const { supported: micSupported, active: audioActive, level, error: audioError, start: startAudio, stop: stopAudio } =
     useAudioLevel();
@@ -114,32 +122,33 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
 
-  const persona = (() => {
-    try {
-      return localStorage.getItem(PERSONA_STORAGE_KEY) || "ceo_assistant";
-    } catch {
-      return "ceo_assistant";
-    }
-  })();
-
-  const runChat = useCallback(
+  /**
+   * Speaking is not a separate pipeline. Every utterance goes through the same
+   * `routeAndExecute` the typed Command Center uses, so voice can open the
+   * Website Builder, plan Work Queue steps, or answer from Brand Brain — with
+   * the same approval gate on real-world actions. Voice adds only two things:
+   * it reads the reply aloud, and it follows the handoff on screen.
+   */
+  const runCommand = useCallback(
     async (text: string) => {
       setLastUserText(text);
       setPhase("thinking");
-      try {
-        const messages: ChatMessage[] = [{ role: "user", content: text }];
-        const res = await api.chat(messages, companyId, persona);
-        setLastReplyText(res.text);
-        setPhase("speaking");
-        speak(res.text, () => setPhase("idle"));
-      } catch (err) {
-        setErrorDetail(
-          err instanceof ApiError ? err.message : "Couldn't reach Jarvis. Check the AI provider key in .env."
-        );
-        setPhase("error");
-      }
+      // Shared per-workspace thread: spoken and typed turns continue the same
+      // conversation, so "make it bolder" works after either.
+      const outcome = await routeAndExecute(text, {
+        companyId,
+        history: loadThread(companyId),
+        onStatus: (status) => setLiveStatus(status),
+      });
+      appendTurn(companyId, text, outcome);
+      setLastReplyText(outcome.reply);
+      // Follow the handoff immediately — the reply is spoken while the
+      // destination loads, so the work is already on screen when Jarvis stops.
+      if (outcome.handoffPath) navigate(outcome.handoffPath);
+      setPhase("speaking");
+      speak(outcome.speech, () => setPhase("idle"));
     },
-    [companyId, persona, speak]
+    [companyId, navigate, speak]
   );
 
   const {
@@ -153,7 +162,7 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
     onFinalResult: (transcript) => {
       handledFinalRef.current = true;
       stopAudio();
-      if (transcript.trim()) runChat(transcript.trim());
+      if (transcript.trim()) runCommand(transcript.trim());
       else setPhase("idle");
     },
   });
@@ -174,7 +183,10 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
     return phase; // idle | transcribing | thinking | speaking
   })();
 
-  const detail = state === "error" ? errorDetail : DETAIL[state] ?? null;
+  // While working, prefer the router's own words ("Researching…", "Building…")
+  // over the generic "thinking" copy — the console says what Jarvis is doing.
+  const detail =
+    state === "error" ? errorDetail : state === "thinking" ? liveStatus ?? DETAIL.thinking! : DETAIL[state] ?? null;
 
   // Mirror to the global sidebar orb.
   useEffect(() => {
@@ -184,6 +196,7 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
   const start = useCallback(async () => {
     if (!available) return;
     setErrorDetail(null);
+    setLiveStatus(null);
     handledFinalRef.current = false;
     cancelSpeech(); // barge-in: interrupt any in-progress reply
     // Pin the live meter to the chosen device (read fresh each start, so a
@@ -210,9 +223,9 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
       const trimmed = text.trim();
       if (!trimmed) return;
       cancelSpeech();
-      runChat(trimmed);
+      runCommand(trimmed);
     },
-    [cancelSpeech, runChat]
+    [cancelSpeech, runCommand]
   );
 
   // If recognition ends without a final transcript (e.g. silence), fall back
@@ -239,6 +252,7 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
     lastUserText,
     lastReplyText,
     detail,
+    liveStatus,
     toggle,
     stop,
     sendText,

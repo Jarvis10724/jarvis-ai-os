@@ -59,6 +59,10 @@ export default function VoiceConsole({
 }) {
   const [text, setText] = useState("");
   const meta = STATE_META[voice.state];
+  // While working, show the router's live status ("Researching…", "Building…")
+  // instead of a generic "Thinking" — spoken commands report the same progress
+  // the typed Command Center does.
+  const stateLabel = voice.state === "thinking" && voice.liveStatus ? voice.liveStatus : meta.label;
   const listening = voice.state === "listening";
   const busy = voice.state === "thinking" || voice.state === "transcribing";
 
@@ -88,7 +92,7 @@ export default function VoiceConsole({
           {/* State pill */}
           <div className="flex shrink-0 items-center gap-2">
             <span className={clsx("h-2 w-2 shrink-0 animate-pulseGlow rounded-full", meta.dot)} />
-            <span className={clsx("text-xs font-semibold uppercase tracking-wider", meta.tone)}>{meta.label}</span>
+            <span className={clsx("text-xs font-semibold uppercase tracking-wider", meta.tone)}>{stateLabel}</span>
           </div>
 
           {/* Active mic chip — visible whenever a specific input is selected. */}

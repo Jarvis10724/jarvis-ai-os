@@ -3,43 +3,34 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Compass, CornerDownLeft, ExternalLink, SquarePen, Wrench, X } from "lucide-react";
 
-import { api, ApiError } from "@/api/client";
-import JarvisCore, { type JarvisCoreState } from "@/components/JarvisCore";
+import JarvisCore from "@/components/JarvisCore";
 import { useCompany } from "@/context/CompanyContext";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useCoreState } from "@/hooks/useCoreState";
-import type { ChatMessage, CommandDecision, ToolCallLog } from "@/types";
-
-const PERSONA_KEY = "jarvis_active_persona";
-
-// A routed turn carries the decision that produced it, so the thread shows
-// which subsystem handled each request (and lets you jump back to it).
-type DeckMessage = ChatMessage & { decision?: CommandDecision };
-
-// The Core's state mirrors the kind of work the destination implies, so the orb
-// communicates what Jarvis is actually doing — not just "thinking".
-const CORE_STATE_FOR: Record<string, JarvisCoreState> = {
-  deep_research: "researching",
-  web_builder: "generating",
-  logo_design: "generating",
-  product_creation: "generating",
-  code_writer: "generating",
-  automation: "generating",
-  work_queue: "generating",
-};
+import {
+  clearThread,
+  coreStateFor,
+  loadThread,
+  routeAndExecute,
+  saveThread,
+  type CommandMessage,
+} from "@/lib/commandRouter";
+import type { CommandDecision, ToolCallLog } from "@/types";
 
 // Give the user a beat to read what Jarvis decided before the screen changes.
 const HANDOFF_MS = 850;
 
 /**
- * The AI Command Center (Phase 3) — the primary way to command Jarvis, reachable
- * from every screen. You never pick a tool: every request is ROUTED
- * automatically (POST /command-center/route) to the subsystem that should handle
- * it — a studio Quick Action, the chat pipeline (memory + tools + approval-gated
- * actions), the Work Queue for multi-step work, or the surface that answers it —
- * and Jarvis says what it's doing while it works, with live status on the Core.
- * The thread is per workspace and persistent, so routing keeps context.
+ * The AI Command Center (Phase 3) — the typed way into the one pipeline,
+ * reachable from every screen. You never pick a tool: the request goes through
+ * `routeAndExecute` (lib/commandRouter), exactly like voice and every other
+ * interface, and lands in the subsystem that owns it — a studio Quick Action,
+ * the chat pipeline (memory + tools + approval-gated actions), the Work Queue
+ * for multi-step work, or the surface that answers it. Jarvis says what it's
+ * doing while it works, with live status on the Core. The thread is per
+ * workspace, persistent, and SHARED with voice — speaking and typing continue
+ * the same conversation.
  */
 export default function CoreCommandSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { activeCompany, activeCompanyId } = useCompany();
@@ -48,7 +39,7 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   const coreState = useCoreState();
   const navigate = useNavigate();
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<DeckMessage[]>([]);
+  const [messages, setMessages] = useState<CommandMessage[]>([]);
   const [busy, setBusy] = useState(false);
   // What Jarvis is doing right now, in the destination's own words
   // ("Researching…", "Building…", "Waiting for approval…").
@@ -56,32 +47,19 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Persist the conversation PER WORKSPACE so it survives closing the sheet,
-  // navigating, and full reloads — and each workspace keeps its own thread.
-  const threadKey = `jarvis_core_thread_${activeCompanyId ?? "global"}`;
+  // The thread is shared with voice and persisted per workspace, so it's
+  // reloaded on open (a spoken turn while the sheet was closed shows up here)
+  // and whenever the workspace changes.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(threadKey);
-      setMessages(saved ? (JSON.parse(saved) as DeckMessage[]) : []);
-    } catch {
-      setMessages([]);
-    }
-  }, [threadKey]);
+    setMessages(loadThread(activeCompanyId));
+  }, [activeCompanyId, open]);
   useEffect(() => {
-    try {
-      if (messages.length) localStorage.setItem(threadKey, JSON.stringify(messages.slice(-60)));
-    } catch {
-      /* storage full / unavailable — thread still lives in memory this session */
-    }
-  }, [messages, threadKey]);
+    if (messages.length) saveThread(activeCompanyId, messages);
+  }, [messages, activeCompanyId]);
 
   function newThread() {
     setMessages([]);
-    try {
-      localStorage.removeItem(threadKey);
-    } catch {
-      /* ignore */
-    }
+    clearThread(activeCompanyId);
     inputRef.current?.focus();
   }
 
@@ -97,114 +75,43 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
 
-  async function runChat(history: DeckMessage[], decision: CommandDecision) {
-    const persona = (() => {
-      try {
-        return localStorage.getItem(PERSONA_KEY) || "ceo_assistant";
-      } catch {
-        return "ceo_assistant";
-      }
-    })();
-    // Send only the wire shape (role/content) — routing metadata is UI-local.
-    const res = await api.chat(
-      history.map((m) => ({ role: m.role, content: m.content })),
-      activeCompanyId,
-      persona
-    );
-    setMessages([...history, { role: "assistant", content: res.text, toolCalls: res.tool_calls, decision }]);
-  }
-
   /**
-   * One request in, the right subsystem out. Route first, then act on the
-   * decision — no manual tool picking, and the same approval-gated pipelines
-   * underneath.
+   * One request in, the right subsystem out — through the shared pipeline that
+   * voice and every other interface uses. This surface only renders the result
+   * and performs the handoff.
    */
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
-    const next: DeckMessage[] = [...messages, { role: "user", content: text }];
+    const next: CommandMessage[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setInput("");
     setBusy(true);
     setStatus("thinking");
     setLiveStatus("Thinking…");
 
-    let decision: CommandDecision;
-    try {
-      decision = await api.routeCommand(
-        text,
-        activeCompanyId,
-        next.slice(-6).map((m) => ({ role: m.role, content: m.content }))
-      );
-    } catch {
-      // Routing is best-effort: if it's unavailable, still answer via chat.
-      decision = {
-        destination: "chat",
-        label: "Chat",
-        mode: "chat",
-        target: null,
-        status: "Thinking…",
-        explanation: "",
-        clarifying_question: null,
-      };
-    }
-    setLiveStatus(decision.status);
-    setStatus(CORE_STATE_FOR[decision.destination] ?? "thinking");
+    const outcome = await routeAndExecute(text, {
+      companyId: activeCompanyId,
+      history: messages,
+      onStatus: (status, decision) => {
+        setLiveStatus(status);
+        if (decision) setStatus(coreStateFor(decision.destination));
+      },
+    });
 
-    try {
-      // Only asked when routing genuinely can't proceed — otherwise Jarvis
-      // assumes and acts.
-      if (decision.clarifying_question) {
-        setMessages([...next, { role: "assistant", content: decision.clarifying_question, decision }]);
-        return;
-      }
-
-      if (decision.mode === "chat") {
-        await runChat(next, decision);
-        return;
-      }
-
-      if (decision.mode === "work_queue") {
-        setLiveStatus("Planning…");
-        const run = await api.createWorkPlan(text, activeCompanyId);
-        const steps = run.subtasks.map((s, i) => `${i + 1}. ${s.title}`).join("\n");
-        setMessages([
-          ...next,
-          {
-            role: "assistant",
-            content: `${decision.explanation}\n\nHere's the plan — I'll work through it and stop for your approval on anything with real-world consequences:\n${steps}`,
-            decision,
-          },
-        ]);
-        // Hand off to the Work Queue, which runs the steps in sequence live.
-        setTimeout(() => goto(`/company/work-queue?run=${run.id}&autorun=1`), HANDOFF_MS);
-        return;
-      }
-
-      // studio / navigate — explain, then hand off to the surface that does it.
-      // Studio picks the request up from `ask` and starts the work immediately.
-      const path =
-        decision.mode === "studio"
-          ? `/studio/${decision.target}?ask=${encodeURIComponent(text)}`
-          : decision.target ?? "/";
-      setMessages([
-        ...next,
-        { role: "assistant", content: `${decision.explanation} Opening ${decision.label}…`, decision },
-      ]);
-      setTimeout(() => goto(path), HANDOFF_MS);
-    } catch (err) {
-      setMessages([
-        ...next,
-        {
-          role: "assistant",
-          content: err instanceof ApiError ? err.message : "Couldn't reach Jarvis. Check the AI provider key in .env.",
-          decision,
-        },
-      ]);
-    } finally {
-      setBusy(false);
-      setStatus("idle");
-    }
+    setMessages([
+      ...next,
+      {
+        role: "assistant",
+        content: outcome.reply,
+        toolCalls: outcome.toolCalls,
+        decision: outcome.decision,
+      },
+    ]);
+    setBusy(false);
+    setStatus("idle");
+    // Give the user a beat to read the decision before the screen changes.
+    if (outcome.handoffPath) setTimeout(() => goto(outcome.handoffPath!), HANDOFF_MS);
   }
 
   return (

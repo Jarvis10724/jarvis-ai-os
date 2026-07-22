@@ -17,13 +17,16 @@ import {
 import { motion } from "framer-motion";
 import clsx from "clsx";
 
-import { api, ApiError } from "@/api/client";
+import { useNavigate } from "react-router-dom";
+
+import { api } from "@/api/client";
 import JarvisCore, { type JarvisCoreState } from "@/components/JarvisCore";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useMicrophoneDevices } from "@/hooks/useMicrophoneDevices";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { routeAndExecute } from "@/lib/commandRouter";
 import type { ChatMessage, Persona, ToolCallLog } from "@/types";
 
 const VOICE_STATE_LABEL: Record<JarvisCoreState, string> = {
@@ -177,6 +180,7 @@ export default function ChatPanel({ autoPrompt, autoVoice }: ChatPanelProps = {}
   } = useMicrophoneDevices();
   const { activeCompanyId } = useCompany();
   const { setStatus: setGlobalAssistantStatus } = useAssistantStatus();
+  const navigate = useNavigate();
 
   // "AI Executives" persona switcher — all personas share the same
   // memory/tools, this just changes framing/tone via the backend's system
@@ -192,46 +196,40 @@ export default function ChatPanel({ autoPrompt, autoVoice }: ChatPanelProps = {}
     localStorage.setItem(PERSONA_STORAGE_KEY, persona);
   }, [persona]);
 
+  /**
+   * Typed or spoken, this page is not a separate brain: everything goes through
+   * the same `routeAndExecute` pipeline as the Command Center and the Orb, so
+   * "build me a landing page" said here opens the Website Builder rather than
+   * being answered as conversation.
+   */
   async function sendMessage(content: string) {
     const trimmed = content.trim();
     if (!trimmed || sending) return;
 
-    const nextMessages = [...messages, { role: "user", content: trimmed } as ChatMessage];
-    setMessages(nextMessages);
+    const history = messages;
+    setMessages([...history, { role: "user", content: trimmed } as ChatMessage]);
     setInput("");
     setSending(true);
     setError(null);
 
-    try {
-      const res = await api.chat(
-        nextMessages.map(({ role, content }) => ({ role, content })),
-        activeCompanyId,
-        persona
-      );
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: res.text, toolCalls: res.tool_calls },
-      ]);
-      // In continuous mode, resume listening the instant Jarvis finishes
-      // speaking — that's the whole "talk naturally, back and forth"
-      // experience. Outside continuous mode this is a no-op beyond TTS.
-      speak(res.text, () => {
-        if (continuousModeRef.current && micSupportedRef.current) {
-          startListeningRef.current();
-        }
-      });
-    } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "Couldn't reach the AI provider. Check your API keys in .env."
-      );
-    } finally {
-      setSending(false);
-      requestAnimationFrame(() => {
-        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-      });
-    }
+    const outcome = await routeAndExecute(trimmed, { companyId: activeCompanyId, history });
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: outcome.reply, toolCalls: outcome.toolCalls },
+    ]);
+    setSending(false);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    });
+    // In continuous mode, resume listening the instant Jarvis finishes
+    // speaking — that's the whole "talk naturally, back and forth"
+    // experience. Outside continuous mode this is a no-op beyond TTS.
+    speak(outcome.speech, () => {
+      if (continuousModeRef.current && micSupportedRef.current) {
+        startListeningRef.current();
+      }
+    });
+    if (outcome.handoffPath) navigate(outcome.handoffPath);
   }
 
   const {
