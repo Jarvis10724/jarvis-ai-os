@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.ai_providers.base import Message
 from app.ai_providers.factory import get_ai_provider, get_image_provider
 from app.auth.dependencies import CurrentUser
+from app.core import brand_brain_service
 from app.core import memory_service
 from app.core import project_service
 from app.core import search_service
@@ -861,12 +862,15 @@ async def send_message(
                 "invent other sources, URLs, or figures beyond what these support.\n" + src_lines
             )
 
-    # Company context for the system prompt.
+    # Company context for the system prompt — including the Brand Brain (the
+    # workspace's real store), so Quick Actions like Website Builder generate
+    # from actual products/pricing rather than invented data.
     company_line = ""
     if company_id:
         company = db.query(Company).filter(Company.id == company_id).first()
         if company:
             company_line = f"\n\nActive company: {company.name!r}. Tailor everything to this business."
+            company_line += brand_brain_service.brand_prompt_context(db, company_id)
 
     provider = get_ai_provider()
     system_prompt = build_system_prompt(action, company_line=company_line, state=current_state)

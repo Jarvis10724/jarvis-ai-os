@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.ai_providers.base import Message
 from app.ai_providers.factory import get_ai_provider
 from app.auth.dependencies import CurrentUser
-from app.core import memory_service
+from app.core import brand_brain_service, memory_service
 from app.core.agent_tools import TOOL_REGISTRY
 from app.core.personas import get_persona, list_personas
 from app.db.models.company import Company
@@ -137,6 +137,10 @@ def _build_system_prompt(current_user, db: Session, company_id: str | None, pers
                 f"\n\nCurrently active company: {company.name!r} (id={company.id}). Default company_id for "
                 "memory tools and business-data tools to this unless told otherwise."
             )
+            # Brand Brain — the workspace's authoritative store catalog (read-only
+            # mirror of Shopify), shared with Quick Actions + agents so every AI
+            # surface answers from the same source of truth. Absent → "".
+            prompt += brand_brain_service.brand_prompt_context(db, company.id)
     persona = get_persona(persona_key)
     return prompt + "\n\n" + persona.system_prompt_addendum
 

@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.ai_providers.base import Message
 from app.ai_providers.factory import get_ai_provider
+from app.core import brand_brain_service
 from app.core import memory_service
 from app.core.agent_tools import TOOL_REGISTRY
 from app.db.models.agent_run import AgentRun
@@ -241,6 +242,8 @@ class AgentRunner:
                     f"\n\nActive workspace: company {company.name!r} (id={company.id}). "
                     "Use this company_id for every company-scoped tool."
                 )
+                # Ground the agent in the workspace's real store (Brand Brain).
+                company_line += brand_brain_service.brand_prompt_context(self.db, company_id)
 
         tool_defs = [TOOL_REGISTRY[n].definition for n in agent.tool_names()]
         provider = get_ai_provider()

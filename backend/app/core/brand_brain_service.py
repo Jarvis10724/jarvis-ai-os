@@ -349,6 +349,23 @@ def list_collections(db: Session, company_id: str, *, limit: int = 100) -> list[
     return [_collection_dict(c) for c in rows]
 
 
+def brand_prompt_context(db: Session, company_id: str | None, *, product_limit: int = 50) -> str:
+    """A ready-to-append system-prompt block grounding the AI in this workspace's
+    Brand Brain (the real store), or "" if there's no synced brain. Shared by
+    chat, the studio Quick Actions, and agents so every AI surface answers from
+    the same source of truth."""
+    if not company_id:
+        return ""
+    ctx = get_brand_context(db, company_id, product_limit=product_limit)
+    if not ctx.get("exists"):
+        return ""
+    return (
+        "\n\nBrand Brain (AUTHORITATIVE source of truth for this workspace's store — prefer these facts "
+        "over any older or seeded product data when answering about products, pricing, or collections):\n"
+        + ctx["brand_brief"]
+    )
+
+
 def get_brand_context(db: Session, company_id: str, *, product_limit: int = 50) -> dict:
     """The canonical brand brief — the default source of truth other features
     (website builder, product pages, emails, social, research, agents) read
