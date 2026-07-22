@@ -254,6 +254,23 @@ export interface CapabilityView {
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "executed";
 
+/** What a committed storefront change reports back. `verified: false` is not a
+ *  failure — it means the action had no prior value to compare a read-back
+ *  against (a create, a delete, a reorder), so existence was checked, not
+ *  equality. The UI must not call that "verified". */
+export interface ShopifyExecutionResult {
+  committed?: boolean;
+  changed?: boolean;
+  verified?: boolean;
+  action?: string;
+  target?: string;
+  product?: string | null;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  note?: string;
+  shopify_response?: unknown;
+}
+
 export interface ApprovalRequestView {
   id: string;
   capability_name: string;
@@ -277,6 +294,12 @@ export interface ApprovalRequestView {
   decided_at: string | null;
   executed_at: string | null;
   note: string | null;
+  /* The outcome, read from the shared queue rather than from the response to
+   * whichever device pressed Approve — so the phone and the desktop render an
+   * identical result, failure reason, and deciding device. */
+  result: ShopifyExecutionResult | Record<string, unknown> | null;
+  execution_error: string | null;
+  decided_device: string | null;
   created_at: string | null;
 }
 
@@ -309,7 +332,7 @@ export interface ApprovalDecisionResult extends ApprovalRequestView {
   /** Set when the capability has no executor — consent recorded, nothing done. */
   execution_note?: string;
   /** Set when the executor ran and failed; the request stays 'approved'. */
-  execution_error?: string;
+  execution_error: string | null;
   replan?: ReplanResult | null;
 }
 export interface PlanDecisionResult {

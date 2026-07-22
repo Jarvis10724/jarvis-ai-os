@@ -160,6 +160,12 @@ def serialize_approval(req: ApprovalRequest) -> dict:
         "executed_at": req.executed_at.isoformat() if req.executed_at else None,
         "note": req.note,
         "created_at": req.created_at.isoformat() if req.created_at else None,
+        # The outcome, read from the database rather than from whatever the
+        # deciding device happened to be told — so the phone and the desktop
+        # render an identical result, error, and audit for the same request.
+        "result": json.loads(req.result_json) if req.result_json else None,
+        "execution_error": req.execution_error,
+        "decided_device": req.decided_device,
     }
 
 
@@ -608,15 +614,25 @@ def reject_action(db: Session, *, owner_id: str, request_id: str, decided_by: st
     return after
 
 
-def mark_executed(db: Session, *, owner_id: str, request_id: str, result_note: str | None = None) -> dict:
+def mark_executed(
+    db: Session, *, owner_id: str, request_id: str, result_note: str | None = None,
+    result: dict | None = None,
+) -> dict:
     """Called by the integration after it actually performs the approved
     action against the external API. Kept separate from approve_action()
     because approval and execution can legitimately happen at different
-    times (e.g. approved now, executed by a retry a minute later)."""
+    times (e.g. approved now, executed by a retry a minute later).
+
+    `result` is the structured outcome (verified value, external response). It
+    is STORED, not just returned, because the device that approved is often not
+    the only device watching."""
     req = _approval_owned(db, request_id, owner_id)
     if req.status != "approved":
         raise ValidationError(f"Only approved requests can be marked executed (this one is '{req.status}').")
     before = serialize_approval(req)
+    if result is not None:
+        req.result_json = json.dumps(result, default=str)[:8000]
+    req.execution_error = None
     req.status = "executed"
     req.executed_at = datetime.now(timezone.utc)
     db.commit()

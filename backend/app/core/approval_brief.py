@@ -135,7 +135,7 @@ def _cal_delete(p: dict) -> dict:
 
 @_register("business_data", "update_product")
 def _product_update(p: dict) -> dict:
-    fields = [k for k in p.keys() if k not in ("product_id", "id", "company_id")]
+    fields = [k for k in p.keys() if k not in ("product_id", "id", "company_id") and not k.startswith("_")]
     return {
         "summary": f"Change {', '.join(fields) if fields else 'fields'} on a product record",
         "expected_outcome": "The product record in Jarvis is updated. This does not touch the live store.",
@@ -212,7 +212,10 @@ def _shopify_price(p: dict) -> dict:
 
 @_register("shopify", "update_product")
 def _shopify_product(p: dict) -> dict:
-    fields = [k for k in p if k not in ("product", "handle", "product_id")]
+    # Underscore-prefixed keys are internal plumbing the executor puts on the
+    # payload (_preview, _approval_id). They are not fields being edited and
+    # must never appear in a summary a human reads.
+    fields = [k for k in p if k not in ("product", "handle", "product_id") and not k.startswith("_")]
     return {
         "summary": f"Edit {', '.join(fields) if fields else 'fields'} on {_target(p)}",
         "expected_outcome": f"The listed fields on {_target(p)} would change. " + _NOT_LIVE,

@@ -50,5 +50,8 @@ async def execute_if_registered(db: Session, *, owner_id: str, approval: dict) -
         payload={**(approval["payload"] or {}), "_approval_id": approval["id"]},
     )
     return capability_service.mark_executed(
-        db, owner_id=owner_id, request_id=approval["id"], result_note=str(result)[:500]
+        db, owner_id=owner_id, request_id=approval["id"], result_note=str(result)[:500],
+        # Stored structurally, not just as a note, so both devices can render
+        # the verified value and the external response identically.
+        result=result if isinstance(result, dict) else {"result": result},
     )

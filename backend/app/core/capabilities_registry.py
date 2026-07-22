@@ -21,6 +21,11 @@ matter of implementing one class, not touching this framework.
 """
 from dataclasses import dataclass, field
 
+# The storefront action set, declared as data one layer down. Imported here so
+# the capability's action list and the executor's dispatch table are the same
+# list — see the ActionDefinition generation in the shopify entry below.
+from app.core.shopify_action_registry import ACTIONS as _SHOPIFY_ACTIONS
+
 
 @dataclass(frozen=True)
 class ActionDefinition:
@@ -143,15 +148,17 @@ CAPABILITIES: dict[str, CapabilityDefinition] = {
             # has a registered executor, so approving records consent and
             # nothing reaches the live store until an executor is deliberately
             # enabled. Nothing here can publish on its own.
-            ActionDefinition("update_inventory", "Change a product's stock level", requires_approval=True),
-            ActionDefinition("update_price", "Change a product's price", requires_approval=True),
-            ActionDefinition("update_product", "Edit a product's title/description/status", requires_approval=True),
-            ActionDefinition("update_seo", "Change a product's SEO title/description", requires_approval=True),
             ActionDefinition("update_images", "Add/replace/reorder product images", requires_approval=True),
-            ActionDefinition("create_draft_product", "Create a new product as an unpublished draft", requires_approval=True),
-            ActionDefinition("create_collection", "Create a collection", requires_approval=True),
-            ActionDefinition("create_discount", "Create a discount / price rule", requires_approval=True),
-            ActionDefinition("publish_product", "Make a draft product live on the storefront", requires_approval=True),
+            # The full storefront action set is declared in
+            # app.core.shopify_action_registry, which is also what the executor
+            # dispatches on. Generating the ActionDefinitions from it means an
+            # action can never exist in one place and not the other — a write
+            # the capability framework doesn't know about would be a write with
+            # no permission check and no approval gate.
+            *(
+                ActionDefinition(name, spec.label or name.replace("_", " "), requires_approval=True)
+                for name, spec in _SHOPIFY_ACTIONS.items()
+            ),
         ],
     ),
     "amazon": CapabilityDefinition(

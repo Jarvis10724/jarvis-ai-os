@@ -140,6 +140,17 @@ class ApprovalRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- The outcome, persisted so EVERY device sees the same thing ---------
+    # These used to exist only in the HTTP response to whichever device pressed
+    # Approve. The other device polled the queue and could see that a request
+    # was approved but never why it failed or what it verified.
+    #: Structured execution result — verified value, external API response.
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Why it didn't run, in the same words both devices display.
+    execution_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Which device the decision was made from ("iPhone", "desktop", …).
+    decided_device: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
 
 class CapabilityAuditLog(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Append-only history of every capability action — approved writes,

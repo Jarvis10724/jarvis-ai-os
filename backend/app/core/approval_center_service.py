@@ -159,6 +159,7 @@ async def _decide_once(
         raise ValidationError(f"Approval request is '{req.status}', not pending.")
 
     if device:
+        req.decided_device = device[:40]
         db.add(
             CapabilityAuditLog(
                 owner_id=owner_id, company_id=req.company_id, capability_name=req.capability_name,
@@ -184,6 +185,16 @@ async def _decide_once(
     return await _execute(db, owner_id=owner_id, approval=approved)
 
 
+def _store_execution_error(db: Session, *, request_id: str, error: str) -> None:
+    """Write the failure onto the request itself. The queue is the shared
+    source of truth; a reason that lives only in one device's HTTP response
+    isn't shared at all."""
+    db.query(ApprovalRequest).filter(ApprovalRequest.id == request_id).update(
+        {"execution_error": error[:2000]}, synchronize_session=False
+    )
+    db.commit()
+
+
 async def _execute(db: Session, *, owner_id: str, approval: dict) -> dict:
     """Run an approved action through its registered executor. A missing
     executor is not an error — it means consent is recorded and the action is
@@ -192,6 +203,10 @@ async def _execute(db: Session, *, owner_id: str, approval: dict) -> dict:
         executed = await capability_executors.execute_if_registered(db, owner_id=owner_id, approval=approval)
     except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
         logger.error("approval_execution_failed", request_id=approval["id"], error=str(exc))
+        # PERSIST the reason. Returning it only to the device that approved
+        # would leave the other device showing 'approved' with no explanation
+        # for a change that never happened.
+        _store_execution_error(db, request_id=approval["id"], error=str(exc))
         approval["execution_error"] = str(exc)
         return approval
     if executed is None:

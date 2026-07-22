@@ -27,6 +27,7 @@ import type {
   ApprovalQueue,
   ApprovalRequestView,
   CapabilityAuditEntry,
+  ShopifyExecutionResult,
   CapabilityView,
 } from "@/types";
 
@@ -282,9 +283,15 @@ export default function ApprovalsPage() {
                       <p className="text-jarvis-text">{h.summary}</p>
                       <p className="text-[11px] text-jarvis-muted">
                         {h.status}
+                        {h.decided_device ? ` · from ${h.decided_device}` : ""}
                         {h.decided_at ? ` · ${new Date(h.decided_at).toLocaleString()}` : ""}
                         {h.note ? ` · “${h.note}”` : ""}
                       </p>
+                      {/* A completed action's verified result and a failure
+                          reason belong in history too — otherwise the device
+                          that didn't decide can see THAT something happened
+                          but never what. */}
+                      <ExecutionOutcome request={h} />
                     </div>
                   </li>
                 ))}
@@ -496,6 +503,67 @@ function ChangePreview({ payload }: { payload: Record<string, unknown> | null | 
   );
 }
 
+/**
+ * What happened after the decision — success, failure, or consent-only.
+ *
+ * Every field here comes off the request itself, which both devices poll from
+ * the same queue. Nothing is derived from the local response to a decision, so
+ * the phone shows this whether the phone or the desktop pressed the button.
+ */
+function ExecutionOutcome({ request }: { request: ApprovalRequestView }) {
+  const result = (request.result ?? null) as ShopifyExecutionResult | null;
+  const error = request.execution_error;
+  if (!error && !result) return null;
+
+  const decided = request.decided_device ? ` from ${request.decided_device}` : "";
+  const when = request.executed_at ?? request.decided_at;
+  const stamp = when ? new Date(when).toLocaleString() : null;
+
+  if (error) {
+    return (
+      <div className="mt-2.5 rounded-xl border border-jarvis-rose/40 bg-jarvis-rose/10 p-3">
+        <p className="flex items-center gap-1.5 text-xs font-semibold text-jarvis-rose">
+          <AlertTriangle className="h-3.5 w-3.5" /> Not carried out
+        </p>
+        <p className="mt-1 break-words text-xs text-jarvis-muted">{error}</p>
+        <p className="mt-1.5 text-[10px] uppercase tracking-wide text-jarvis-faint">
+          Decided{decided}
+          {stamp ? ` · ${stamp}` : ""}
+        </p>
+      </div>
+    );
+  }
+
+  const after = result?.after ?? {};
+  return (
+    <div className="mt-2.5 rounded-xl border border-jarvis-emerald/30 bg-jarvis-emerald/10 p-3">
+      <p className="flex items-center gap-1.5 text-xs font-semibold text-jarvis-emerald">
+        <ShieldCheck className="h-3.5 w-3.5" />
+        {result?.verified
+          ? "Confirmed in Shopify"
+          : result?.committed
+            ? "Sent to Shopify (not verified by read-back)"
+            : "Carried out"}
+      </p>
+      {Object.keys(after).length > 0 && (
+        <ul className="mt-1.5 space-y-0.5">
+          {Object.entries(after).map(([key, value]) => (
+            <li key={key} className="break-words font-data text-xs text-jarvis-text">
+              <span className="text-jarvis-faint">{key.replace(/_/g, " ")}: </span>
+              {show(value)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {result?.note && <p className="mt-1.5 text-[11px] text-jarvis-muted">{result.note}</p>}
+      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-jarvis-faint">
+        Decided{decided}
+        {stamp ? ` · ${stamp}` : ""}
+      </p>
+    </div>
+  );
+}
+
 /** One request, with everything a human needs in order to decide it. */
 function RequestCard({
   request,
@@ -574,6 +642,9 @@ function RequestCard({
 
       {/* The diff, always visible — collapsed or not. It is the decision. */}
       <ChangePreview payload={request.payload} />
+      {/* And the outcome, read from the shared queue so it is identical here
+          and on the other device, whichever one actually decided it. */}
+      <ExecutionOutcome request={request} />
 
       {expanded && (
         <div className="mt-2.5 space-y-2.5 text-xs">

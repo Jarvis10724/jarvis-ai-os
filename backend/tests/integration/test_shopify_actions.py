@@ -254,7 +254,10 @@ class _FakeStore:
 
 def _open_the_gates(monkeypatch):
     monkeypatch.setattr(settings, "SHOPIFY_WRITE_ENABLED", True)
-    monkeypatch.setattr(settings, "SHOPIFY_SCOPES", "read_products,read_inventory,write_products,write_inventory")
+    monkeypatch.setattr(
+        settings, "SHOPIFY_SCOPES",
+        "read_products,read_inventory,write_products,write_inventory,write_discounts,write_content",
+    )
 
 
 def _wire(monkeypatch, store):
@@ -458,13 +461,125 @@ def test_the_local_catalog_matches_shopify_after_a_commit(client, monkeypatch):
         db.close()
 
 
-def test_an_unimplemented_action_still_refuses(client, monkeypatch):
-    """Opening the gates must not make every declared action suddenly live."""
+def test_a_theme_action_is_refused_even_with_its_scope(client, monkeypatch):
+    """The announcement bar, homepage banners and featured blocks live in theme
+    assets, not in the Admin API. They are declared so a proposal is refused BY
+    NAME — granting the scope must not make them silently do nothing."""
     import pytest
 
     _open_the_gates(monkeypatch)
+    # Grant write_themes too, so the scope gate is NOT what stops this.
+    monkeypatch.setattr(
+        settings, "SHOPIFY_SCOPES",
+        "read_products,read_inventory,write_products,write_inventory,write_themes",
+    )
     with pytest.raises(ValidationError) as exc:
-        # write_products IS granted here, so this reaches the implementation
-        # gate rather than being stopped earlier by the scope gate.
-        _commit(None, "update_seo", {"product": "TEST", "seo_title": "New title"})
-    assert "hasn't been implemented yet" in str(exc.value)
+        _commit(None, "update_announcement_bar", {"text": "Free shipping"})
+    assert "no Admin API call implemented" in str(exc.value)
+    assert "theme-editor change" in str(exc.value)
+    assert "Nothing was sent to Shopify" in str(exc.value)
+
+
+# --- The expanded action set ----------------------------------------------
+
+
+def test_every_declared_action_is_approval_gated_and_scoped():
+    """The capability list and the executor's dispatch table are generated from
+    one registry, so an action can't exist in one and not the other — that
+    would be a write with no permission check."""
+    from app.core.capabilities_registry import get_capability
+    from app.core import shopify_action_registry as reg
+
+    declared = {a.name: a for a in get_capability("shopify").actions}
+    for name, spec in reg.ACTIONS.items():
+        assert name in declared, f"{name} is executable but not declared as a capability action"
+        assert declared[name].requires_approval, f"{name} is not approval-gated"
+        assert spec.scope, f"{name} declares no scope"
+
+
+def test_implemented_actions_can_all_build_their_mutation():
+    """A spec whose variables() raises would fail AFTER approval, at the worst
+    possible moment. Build each one against a representative live record."""
+    from app.core import shopify_action_registry as reg
+
+    live = {
+        "id": "gid://shopify/Product/1", "title": "T", "variant_id": "gid://shopify/ProductVariant/1",
+        "inventory_item_id": "gid://shopify/InventoryItem/1", "location_id": "gid://shopify/Location/1",
+    }
+    payload = {
+        "title": "New", "description": "Copy", "status": "active", "vendor": "V", "product_type": "P",
+        "tags": ["a"], "seo_title": "S", "seo_description": "D", "price": "10.00",
+        "compare_at_price": "20.00", "sku": "SKU", "barcode": "B", "weight": 100, "quantity": 5,
+        "tracked": True, "continue_selling": True, "image_urls": ["https://x/i.png"],
+        "media_ids": ["gid://shopify/MediaImage/1"], "moves": [{"id": "m", "position": 1}],
+        "product_ids": ["gid://shopify/Product/2"], "code": "SAVE10", "percentage": 10,
+        "body": "Body", "published": True, "items": [], "new_title": "Copy of T",
+    }
+    for name, spec in reg.ACTIONS.items():
+        if spec.mutation is None:
+            continue
+        variables = spec.variables(live, payload)
+        assert isinstance(variables, dict) and variables, f"{name} built empty variables"
+
+
+def test_a_new_product_is_always_created_as_a_draft(client, monkeypatch):
+    """Creating and publishing are separate decisions. A create must not put
+    something on the storefront, whatever the payload asked for."""
+    from app.core import shopify_action_registry as reg
+
+    variables = reg.ACTIONS["create_draft_product"].variables({}, {"title": "X", "status": "ACTIVE"})
+    assert variables["input"]["status"] == "DRAFT"
+
+
+def test_a_create_reports_honestly_that_it_was_not_verified(client, monkeypatch):
+    """There is no prior value to compare a read-back against, so this must not
+    claim 'verified' — it says what was checked instead."""
+    company, store = _setup(client, "sw-create@example.com", monkeypatch)
+
+    async def created(_db, **_k):
+        return {"productCreate": {"product": {"id": "gid://shopify/Product/99", "title": "NEW"},
+                                  "userErrors": []}}
+
+    monkeypatch.setattr(sw.shopify_service, "run_approved_mutation", created)
+    result = _commit(company, "create_draft_product", {"title": "NEW"})
+    assert result["committed"] is True
+    assert result["verified"] is False
+    assert "NOT verified by a read-back" in result["note"]
+    assert result["after"]["id"] == "gid://shopify/Product/99"
+
+
+def test_a_non_product_target_must_carry_its_id(client, monkeypatch):
+    """Guessing which discount 'the spring one' means is exactly the inference
+    that must never precede a write."""
+    import pytest
+
+    company, _ = _setup(client, "sw-noid@example.com", monkeypatch)
+    with pytest.raises(ValidationError) as exc:
+        _commit(company, "pause_discount", {"title": "Spring sale"})
+    assert "Could not resolve which discount" in str(exc.value)
+    assert "Pass the Shopify id" in str(exc.value)
+
+
+def test_multi_field_product_edits_verify_every_field(client, monkeypatch):
+    company, store = _setup(client, "sw-multi@example.com", monkeypatch)
+    preview = _preview_of(company, "update_product_details",
+                          {"product": "TEST", "vendor": "Primal Penni", "product_type": "Serum"})
+
+    # The fake store's productUpdate only mirrors title/status/descriptionHtml,
+    # so vendor would not appear on the read-back — make it mirror those too.
+    original = store.mutate
+
+    async def mutate(_db, **kwargs):
+        out = await original(_db, **kwargs)
+        item = kwargs["variables"].get("input", {})
+        for key in ("vendor", "productType"):
+            if key in item:
+                store.product[key] = item[key]
+        return out
+
+    monkeypatch.setattr(sw.shopify_service, "run_approved_mutation", mutate)
+    result = _commit(company, "update_product_details", {
+        "product": "TEST", "vendor": "Primal Penni", "product_type": "Serum", "_preview": preview,
+    })
+    assert result["verified"] is True
+    assert result["after"] == {"vendor": "Primal Penni", "product_type": "Serum"}

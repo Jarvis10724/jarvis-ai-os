@@ -38,7 +38,7 @@ import re
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core import brand_brain_service, shopify_service
+from app.core import brand_brain_service, shopify_action_registry as registry, shopify_service
 from app.core.capability_executors import register_executor
 from app.db.models.brand_brain import BrandProduct
 from app.db.models.capability import CapabilityAuditLog
@@ -51,28 +51,27 @@ CAPABILITY_NAME = "shopify"
 
 #: The Shopify OAuth scope each write action needs. An action whose scope the
 #: app doesn't hold can't be committed, no matter what the operator approves.
+#: Sourced from the action registry so a new action can't be added without one,
+#: plus the order-side actions that live outside the storefront registry.
 REQUIRED_SCOPES: dict[str, str] = {
-    "update_inventory": "write_inventory",
-    "update_price": "write_products",
-    "update_product": "write_products",
-    "update_seo": "write_products",
-    "update_images": "write_products",
-    "create_draft_product": "write_products",
-    "publish_product": "write_products",
-    "create_collection": "write_products",
-    "create_discount": "write_discounts",
+    **registry.REQUIRED_SCOPES,
     "refund_order": "write_orders",
     "fulfill_order": "write_fulfillments",
+    "update_images": "write_products",  # legacy alias of add_images
 }
 
-#: The fields each action may change: payload key -> attribute on a synced
-#: product carrying the current value. Actions absent here have no implemented
-#: Admin API call yet and are refused at commit time rather than half-attempted.
+#: What each action may change: payload key -> attribute on a SYNCED product
+#: holding the current value. Used to build the preview before anything is
+#: proposed. (Verification uses the live record instead — see LIVE_FIELDS.)
+_CATALOG_KEYS = {
+    "quantity": "total_inventory", "price": "price_min", "title": "title",
+    "description": "description", "status": "status", "vendor": "vendor",
+    "product_type": "product_type", "tags": "tags",
+}
 EDITABLE_FIELDS: dict[str, dict[str, str]] = {
-    "update_inventory": {"quantity": "total_inventory"},
-    "update_price": {"price": "price_min"},
-    "update_product": {"title": "title", "description": "description", "status": "status"},
-    "publish_product": {"status": "status"},
+    name: {key: _CATALOG_KEYS.get(key, key) for key in spec.fields}
+    for name, spec in registry.ACTIONS.items()
+    if spec.fields
 }
 
 #: Kept for the single-field preview shape the approval UI already reads.
@@ -213,16 +212,46 @@ def _same(before, after) -> bool:
         return _strip_html(a).lower() == _strip_html(b).lower()
     return a.upper() == b.upper()
 
-
 # --- Live reads -----------------------------------------------------------
+#
+# Verification compares against SHOPIFY, never against the local mirror, so
+# each kind of target needs its own read. The keys returned here are the same
+# keys ActionSpec.fields points at.
 
 _LIVE_PRODUCT_Q = """
 query LiveProduct($id: ID!) {
   product(id: $id) {
-    id title handle status description descriptionHtml totalInventory
-    variants(first: 1) { nodes { id price inventoryItem { id } } }
+    id title handle status description descriptionHtml totalInventory vendor productType tags
+    seo { title description }
+    variants(first: 1) { nodes {
+      id price compareAtPrice sku barcode inventoryPolicy
+      inventoryItem { id tracked measurement { weight { value unit } } }
+    } }
   }
 }
+"""
+
+_LIVE_COLLECTION_Q = """
+query LiveCollection($id: ID!) {
+  collection(id: $id) { id title handle description descriptionHtml productsCount { count } }
+}
+"""
+
+_LIVE_DISCOUNT_Q = """
+query LiveDiscount($id: ID!) {
+  codeDiscountNode(id: $id) {
+    id
+    codeDiscount { ... on DiscountCodeBasic { title status startsAt endsAt } }
+  }
+}
+"""
+
+_LIVE_PAGE_Q = """
+query LivePage($id: ID!) { page(id: $id) { id title handle body isPublished } }
+"""
+
+_LIVE_MENU_Q = """
+query LiveMenu($id: ID!) { menu(id: $id) { id title handle } }
 """
 
 _LOCATIONS_Q = """
@@ -230,136 +259,136 @@ query Locations { locations(first: 5) { nodes { id name } } }
 """
 
 
-async def _read_live(db: Session, *, owner_id: str, company_id: str | None, product_gid: str) -> dict:
-    """The product as Shopify has it right now. This — never the local
-    mirror — is what a commit compares against and verifies with."""
-    data = await shopify_service.run_approved_query(
-        db, owner_id=owner_id, company_id=company_id, query=_LIVE_PRODUCT_Q, variables={"id": product_gid}
-    )
-    product = (data or {}).get("product")
-    if not product:
-        raise ValidationError(
-            f"Shopify no longer has a product at {product_gid}. Nothing was changed — re-sync the catalog."
-        )
+def _flatten_product(product: dict, location_id: str | None) -> dict:
     variants = ((product.get("variants") or {}).get("nodes")) or []
     first = variants[0] if variants else {}
+    item = first.get("inventoryItem") or {}
+    weight = ((item.get("measurement") or {}).get("weight")) or {}
+    seo = product.get("seo") or {}
     return {
-        "raw": product,
+        "id": product.get("id"),
         "title": product.get("title"),
         "description": product.get("descriptionHtml") or product.get("description"),
         "status": product.get("status"),
         "quantity": product.get("totalInventory"),
+        "vendor": product.get("vendor"),
+        "product_type": product.get("productType"),
+        "tags": product.get("tags"),
+        "seo_title": seo.get("title"),
+        "seo_description": seo.get("description"),
         "price": first.get("price"),
+        "compare_at_price": first.get("compareAtPrice"),
+        "sku": first.get("sku"),
+        "barcode": first.get("barcode"),
+        "continue_selling": (first.get("inventoryPolicy") == "CONTINUE"),
+        "tracked": item.get("tracked"),
+        "weight": weight.get("value"),
         "variant_id": first.get("id"),
-        "inventory_item_id": (first.get("inventoryItem") or {}).get("id"),
+        "inventory_item_id": item.get("id"),
+        "location_id": location_id,
+        "raw": product,
     }
 
 
-# --- Mutations ------------------------------------------------------------
-
-_PRODUCT_UPDATE_M = """
-mutation ProductUpdate($input: ProductInput!) {
-  productUpdate(input: $input) {
-    product { id title status descriptionHtml }
-    userErrors { field message }
-  }
+_TARGET_QUERIES = {
+    "product": (_LIVE_PRODUCT_Q, "product"),
+    "collection": (_LIVE_COLLECTION_Q, "collection"),
+    "discount": (_LIVE_DISCOUNT_Q, "codeDiscountNode"),
+    "page": (_LIVE_PAGE_Q, "page"),
+    "menu": (_LIVE_MENU_Q, "menu"),
 }
-"""
-
-_VARIANT_PRICE_M = """
-mutation VariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-    productVariants { id price }
-    userErrors { field message }
-  }
-}
-"""
-
-_INVENTORY_SET_M = """
-mutation InventorySet($input: InventorySetQuantitiesInput!) {
-  inventorySetQuantities(input: $input) {
-    inventoryAdjustmentGroup { createdAt reason }
-    userErrors { field message }
-  }
-}
-"""
 
 
-def _user_errors(data: dict, root: str) -> list[dict]:
-    return ((data or {}).get(root) or {}).get("userErrors") or []
-
-
-async def _apply(
-    db: Session, *, owner_id: str, company_id: str | None, action_type: str,
-    product_gid: str, live: dict, intent: dict,
+async def _read_live(
+    db: Session, *, owner_id: str, company_id: str | None, gid: str, target: str = "product"
 ) -> dict:
-    """Send the actual Admin API mutation. Raises on any userErrors so a
-    partially-rejected write is never treated as success."""
-    if "quantity" in intent:
-        if not live.get("inventory_item_id"):
-            raise ValidationError("This product has no inventory item to set — nothing was sent to Shopify.")
+    """The target as Shopify has it right now. This — never the local mirror —
+    is what a commit compares against and verifies with."""
+    query, root = _TARGET_QUERIES.get(target, _TARGET_QUERIES["product"])
+    data = await shopify_service.run_approved_query(
+        db, owner_id=owner_id, company_id=company_id, query=query, variables={"id": gid}
+    )
+    node = (data or {}).get(root)
+    if not node:
+        raise ValidationError(
+            f"Shopify no longer has a {target} at {gid}. Nothing was changed — re-sync the catalog."
+        )
+
+    if target == "product":
+        location_id = None
         locations = await shopify_service.run_approved_query(
             db, owner_id=owner_id, company_id=company_id, query=_LOCATIONS_Q
         )
         nodes = ((locations or {}).get("locations") or {}).get("nodes") or []
-        if not nodes:
-            raise ValidationError("No Shopify location to set stock at — nothing was sent to Shopify.")
-        data = await shopify_service.run_approved_mutation(
-            db, owner_id=owner_id, company_id=company_id, action_type=action_type,
-            query=_INVENTORY_SET_M,
-            variables={"input": {
-                "name": "available",
-                "reason": "correction",
-                "ignoreCompareQuantity": True,
-                "quantities": [{
-                    "inventoryItemId": live["inventory_item_id"],
-                    "locationId": nodes[0]["id"],
-                    "quantity": int(intent["quantity"]),
-                }],
-            }},
-        )
-        _raise_on_errors(_user_errors(data, "inventorySetQuantities"), action_type)
-        return data
+        if nodes:
+            location_id = nodes[0]["id"]
+        return _flatten_product(node, location_id)
 
-    if "price" in intent:
-        if not live.get("variant_id"):
-            raise ValidationError("This product has no variant to price — nothing was sent to Shopify.")
-        data = await shopify_service.run_approved_mutation(
-            db, owner_id=owner_id, company_id=company_id, action_type=action_type,
-            query=_VARIANT_PRICE_M,
-            variables={
-                "productId": product_gid,
-                "variants": [{"id": live["variant_id"], "price": str(intent["price"])}],
-            },
-        )
-        _raise_on_errors(_user_errors(data, "productVariantsBulkUpdate"), action_type)
-        return data
+    if target == "discount":
+        detail = node.get("codeDiscount") or {}
+        return {"id": node.get("id"), "title": detail.get("title"), "status": detail.get("status"),
+                "ends_at": detail.get("endsAt"), "raw": node}
+    if target == "page":
+        return {"id": node.get("id"), "title": node.get("title"), "body": node.get("body"),
+                "published": node.get("isPublished"), "raw": node}
+    if target == "collection":
+        return {"id": node.get("id"), "title": node.get("title"),
+                "description": node.get("descriptionHtml") or node.get("description"), "raw": node}
+    return {"id": node.get("id"), "title": node.get("title"), "raw": node}
 
-    product_input: dict = {"id": product_gid}
-    if "title" in intent:
-        product_input["title"] = str(intent["title"])
-    if "description" in intent:
-        product_input["descriptionHtml"] = str(intent["description"])
-    if "status" in intent:
-        status = str(intent["status"]).strip().upper()
-        if status not in VALID_STATUSES:
-            raise ValidationError(
-                f"{status!r} isn't a Shopify product status. Use one of: "
-                f"{', '.join(s.lower() for s in VALID_STATUSES)}. Nothing was sent to Shopify."
-            )
-        product_input["status"] = status
-    data = await shopify_service.run_approved_mutation(
-        db, owner_id=owner_id, company_id=company_id, action_type=action_type,
-        query=_PRODUCT_UPDATE_M, variables={"input": product_input},
-    )
-    _raise_on_errors(_user_errors(data, "productUpdate"), action_type)
-    return data
+
+# --- Mutations ------------------------------------------------------------
+
+
+def _user_errors(data: dict, root: str) -> list[dict]:
+    node = (data or {}).get(root) or {}
+    # Media mutations return mediaUserErrors instead of userErrors.
+    return node.get("userErrors") or node.get("mediaUserErrors") or []
 
 
 def _raise_on_errors(errors: list[dict], action_type: str) -> None:
     if errors:
         detail = "; ".join(e.get("message", "") for e in errors if e.get("message"))
         raise ValidationError(f"Shopify rejected the {action_type}: {detail or 'unspecified error'}.")
+
+
+def _validate(action_type: str, spec, live: dict, payload: dict) -> None:
+    """Refuse malformed input BEFORE anything is sent, with a reason naming the
+    field — a rejection from Shopify halfway through is a worse outcome."""
+    if "status" in payload and payload["status"] is not None and "status" in spec.fields:
+        if _status_of(payload["status"]) not in VALID_STATUSES:
+            raise ValidationError(
+                f"{payload['status']!r} isn't a Shopify product status. Use one of: "
+                f"{', '.join(s.lower() for s in VALID_STATUSES)}. Nothing was sent to Shopify."
+            )
+    if spec.target == "product" and action_type in (
+        "update_price", "update_compare_at_price", "update_variant", "set_continue_selling"
+    ) and not live.get("variant_id"):
+        raise ValidationError("This product has no variant to change — nothing was sent to Shopify.")
+    if action_type in ("update_inventory", "set_inventory_tracking", "update_weight"):
+        if not live.get("inventory_item_id"):
+            raise ValidationError("This product has no inventory item — nothing was sent to Shopify.")
+    if action_type == "update_inventory" and not (payload.get("location_id") or live.get("location_id")):
+        raise ValidationError("No Shopify location to set stock at — nothing was sent to Shopify.")
+
+
+def _status_of(value) -> str:
+    return str(value).strip().upper()
+
+
+async def _apply(
+    db: Session, *, owner_id: str, company_id: str | None, action_type: str,
+    spec, live: dict, payload: dict,
+) -> dict:
+    """Send the Admin API mutation this action declares. Raises on userErrors
+    so a partially-rejected write is never treated as success."""
+    _validate(action_type, spec, live, payload)
+    data = await shopify_service.run_approved_mutation(
+        db, owner_id=owner_id, company_id=company_id, action_type=action_type,
+        query=spec.mutation, variables=spec.variables(live, payload),
+    )
+    _raise_on_errors(_user_errors(data, spec.root), action_type)
+    return data
 
 
 # --- Commit ---------------------------------------------------------------
@@ -443,6 +472,25 @@ def _audit(
     db.commit()
 
 
+
+def _resolve_target(db: Session, *, company_id: str | None, spec, payload: dict) -> str | None:
+    """The Shopify gid this action is aimed at.
+
+    Products can be resolved by name against the synced catalog. Everything
+    else — a collection, a discount, a page, a menu — must carry its id,
+    because guessing at which discount 'the spring one' means is exactly the
+    kind of inference that should never precede a write.
+    """
+    preview = payload.get("_preview") or {}
+    explicit = payload.get("id") or payload.get("shopify_id") or preview.get("shopify_id")
+    if explicit:
+        return explicit
+    if spec.target == "product":
+        found = _find_product(db, company_id, payload.get("product") or payload.get("title"))
+        return (found or {}).get("shopify_id")
+    return None
+
+
 async def execute(
     db: Session, *, owner_id: str, company_id: str | None, action_type: str, payload: dict
 ) -> dict:
@@ -451,7 +499,8 @@ async def execute(
     Only ever called by capability_executors after an ApprovalRequest reached
     'approved'. Every failure path raises, which leaves the request in
     'approved' with the reason — returning is reserved for a change Shopify
-    confirmed and that was read back successfully.
+    confirmed, and (where the action can be verified) that was read back
+    successfully.
     """
     scope = REQUIRED_SCOPES.get(action_type)
 
@@ -472,69 +521,109 @@ async def execute(
             f"'{scope}' before this can be committed."
         )
 
+    spec = registry.get(action_type)
+    if spec is None or spec.mutation is None:
+        raise ValidationError(
+            f"'{action_type}' is a recognised action but has no Admin API call implemented "
+            f"({'theme-editor change, not an Admin API resource' if spec and spec.target == 'theme' else 'not built yet'}). "
+            f"Nothing was sent to Shopify."
+        )
+
+    # A create has no prior value to read, diff, or verify against, so it is
+    # allowed to proceed without resolving an existing target.
+    gid = _resolve_target(db, company_id=company_id, spec=spec, payload=payload)
+    creates_something = action_type.startswith("create_")
+
+    if not gid and not creates_something:
+        raise ValidationError(
+            f"Could not resolve which {spec.target} this refers to. "
+            f"{'Pass the Shopify id.' if spec.target != 'product' else ''} Nothing was sent to Shopify."
+        )
+
+    live: dict = {}
+    before: dict = {}
     intent = _intent(action_type, payload)
-    if not intent:
-        raise ValidationError(
-            f"Writes are enabled and '{scope}' is granted, but the Admin API call for "
-            f"'{action_type}' hasn't been implemented yet. Nothing was sent to Shopify."
+
+    if gid:
+        # 1. Read the CURRENT live value — never trust the local mirror here.
+        live = await _read_live(
+            db, owner_id=owner_id, company_id=company_id, gid=gid, target=spec.target
         )
+        before = {f: live.get(f) for f in intent}
 
-    preview = payload.get("_preview") or {}
-    product_gid = preview.get("shopify_id")
-    if not product_gid:
-        found = _find_product(db, company_id, payload.get("product") or payload.get("title"))
-        product_gid = (found or {}).get("shopify_id")
-    if not product_gid:
-        raise ValidationError(
-            f"Could not resolve {payload.get('product')!r} to a Shopify product. Nothing was sent to Shopify."
-        )
+        # 2. The approval was for a specific before -> after. Refuse if it drifted.
+        _assert_not_stale(payload.get("_preview") or {}, live, intent)
 
-    # 1. Read the CURRENT live value — never trust the local mirror for this.
-    live = await _read_live(db, owner_id=owner_id, company_id=company_id, product_gid=product_gid)
-    before = {f: live.get(f) for f in intent}
-
-    # 2. The approval was for a specific before -> after. Refuse if it drifted.
-    _assert_not_stale(preview, live, intent)
-
-    # Already correct: verified without sending a redundant mutation.
-    if all(_same(live.get(f), v) for f, v in intent.items()):
-        logger.info("shopify_commit_noop", action=action_type, company_id=company_id)
-        return {
-            "committed": True, "changed": False, "verified": True,
-            "product": live.get("title"), "before": before, "after": before,
-            "note": "Shopify already holds these values — nothing needed changing.",
-        }
+        # Already correct: verified without sending a redundant mutation.
+        if intent and all(_same(live.get(f), v) for f, v in intent.items()):
+            logger.info("shopify_commit_noop", action=action_type, company_id=company_id)
+            return {
+                "committed": True, "changed": False, "verified": True,
+                "action": action_type, "target": spec.target,
+                "product": live.get("title"), "before": before, "after": before,
+                "note": "Shopify already holds these values — nothing needed changing.",
+            }
 
     # 3-4. Send it; userErrors raise.
     logger.info("shopify_commit_attempt", action=action_type, company_id=company_id)
     response = await _apply(
         db, owner_id=owner_id, company_id=company_id, action_type=action_type,
-        product_gid=product_gid, live=live, intent=intent,
+        spec=spec, live=live, payload=payload,
     )
 
-    # 5-6. Read it back from Shopify and require it to match.
-    verified = await _read_live(db, owner_id=owner_id, company_id=company_id, product_gid=product_gid)
-    mismatched = {f: {"expected": v, "actual": verified.get(f)} for f, v in intent.items()
-                  if not _same(verified.get(f), v)}
-    if mismatched:
-        raise ValidationError(
-            f"The {action_type} was sent, but reading the product back from Shopify does NOT show the new "
-            f"value: {mismatched}. Not marking this as completed — check the product in Shopify Admin."
+    # 5-6. Read it back and require it to match — where that is meaningful.
+    if spec.verifies and gid and intent:
+        verified_record = await _read_live(
+            db, owner_id=owner_id, company_id=company_id, gid=gid, target=spec.target
+        )
+        mismatched = {f: {"expected": v, "actual": verified_record.get(f)} for f, v in intent.items()
+                      if not _same(verified_record.get(f), v)}
+        if mismatched:
+            raise ValidationError(
+                f"The {action_type} was sent, but reading the {spec.target} back from Shopify does NOT show "
+                f"the new value: {mismatched}. Not marking this as completed — check it in Shopify Admin."
+            )
+        after = {f: verified_record.get(f) for f in intent}
+        verified = True
+        note = "Confirmed by reading it back from Shopify."
+        if spec.target == "product":
+            _sync_catalog(db, company_id=company_id, product_gid=gid, verified=verified_record)
+    else:
+        # No prior value to compare against (create/duplicate/delete/reorder).
+        # Report what Shopify returned and be explicit that equality was not
+        # checked, rather than calling this "verified".
+        after = _created_summary(response, spec)
+        verified = False
+        note = (
+            "Shopify accepted the call and returned the result below. There is no prior value to "
+            "compare against for this kind of action, so this was NOT verified by a read-back."
         )
 
-    after = {f: verified.get(f) for f in intent}
-    _sync_catalog(db, company_id=company_id, product_gid=product_gid, verified=verified)
     _audit(
         db, owner_id=owner_id, company_id=company_id, action_type=action_type,
         request_id=payload.get("_approval_id"), before=before, after=after,
-        response=response, verified=after,
+        response=response, verified=after if verified else {},
     )
-    logger.info("shopify_commit_verified", action=action_type, company_id=company_id)
+    logger.info("shopify_commit_done", action=action_type, company_id=company_id, verified=verified)
     return {
-        "committed": True, "changed": True, "verified": True,
-        "product": verified.get("title"), "before": before, "after": after,
-        "note": "Confirmed by reading the product back from Shopify.",
+        "committed": True, "changed": True, "verified": verified,
+        "action": action_type, "target": spec.target,
+        "product": live.get("title") or payload.get("title") or payload.get("product"),
+        "before": before, "after": after, "shopify_response": response, "note": note,
     }
+
+
+def _created_summary(response: dict, spec) -> dict:
+    """The useful part of a create/delete response — the new or removed id."""
+    node = (response or {}).get(spec.root) or {}
+    for key, value in node.items():
+        if key in ("userErrors", "mediaUserErrors"):
+            continue
+        if isinstance(value, dict) and value.get("id"):
+            return {"id": value["id"], **{k: v for k, v in value.items() if k != "id"}}
+        if value:
+            return {key: value}
+    return {}
 
 
 register_executor(CAPABILITY_NAME, execute)

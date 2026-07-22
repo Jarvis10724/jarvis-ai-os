@@ -379,3 +379,86 @@ def test_the_deciding_device_is_recorded(client):
     )
     trail = client.get(f"{API}/approvals/{req['id']}/audit", headers=headers).json()
     assert any("iPhone" in (row.get("note") or "") for row in trail), trail
+
+
+# --- The outcome is shared, not just returned ------------------------------
+
+
+async def test_a_failure_is_visible_to_the_device_that_did_not_approve(client):
+    """The defect this fixes: execution_error used to exist ONLY in the HTTP
+    response to whichever device pressed Approve. The other device polled the
+    queue, saw 'approved', and had no way to learn the change never happened."""
+    from app.core import capability_executors
+
+    headers = _login(client, "shared-failure@example.com")
+    company = client.post(f"{API}/companies", json={"name": "SPN Group LLC"}, headers=headers).json()["id"]
+    _grant(client, headers, "email", ["send"], company)
+
+    async def failing(_db, **_k):
+        raise ValueError("Shopify said no")
+
+    original = capability_executors._EXECUTORS.get("email")
+    capability_executors.register_executor("email", failing)
+    try:
+        req = client.post(
+            f"{API}/approvals",
+            json={"capability_name": "email", "action_type": "send",
+                  "payload": {"to": "a@b.com"}, "company_id": company},
+            headers=headers,
+        ).json()
+        # Device A approves and is told directly.
+        approving = client.post(f"{API}/approvals/{req['id']}/approve", json={}, headers=headers).json()
+        assert "Shopify said no" in (approving.get("execution_error") or "")
+    finally:
+        if original:
+            capability_executors.register_executor("email", original)
+        else:
+            capability_executors._EXECUTORS.pop("email", None)
+
+    # Device B never saw that response — it only reads the shared queue.
+    from_queue = client.get(f"{API}/approvals?company_id={company}", headers=headers).json()
+    row = next(r for r in from_queue if r["id"] == req["id"])
+    assert row["status"] == "approved"
+    assert "Shopify said no" in (row["execution_error"] or ""), "the other device can't see why it failed"
+
+
+async def test_the_verified_result_is_stored_not_just_returned(client):
+    """Same reasoning for success: the verified value has to survive on the
+    request so both devices render an identical completion."""
+    from app.core import capability_executors
+
+    headers = _login(client, "shared-result@example.com")
+    company = client.post(f"{API}/companies", json={"name": "SPN Group LLC"}, headers=headers).json()["id"]
+    _grant(client, headers, "email", ["send"], company)
+
+    async def ok(_db, **_k):
+        return {"committed": True, "verified": True, "after": {"quantity": 120}}
+
+    original = capability_executors._EXECUTORS.get("email")
+    capability_executors.register_executor("email", ok)
+    try:
+        req = client.post(
+            f"{API}/approvals",
+            json={"capability_name": "email", "action_type": "send",
+                  "payload": {"to": "a@b.com"}, "company_id": company},
+            headers=headers,
+        ).json()
+        client.post(
+            f"{API}/approvals/{req['id']}/approve", json={},
+            headers={**headers, "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0) Safari"},
+        )
+    finally:
+        if original:
+            capability_executors.register_executor("email", original)
+        else:
+            capability_executors._EXECUTORS.pop("email", None)
+
+    row = next(
+        r for r in client.get(f"{API}/approvals?company_id={company}", headers=headers).json()
+        if r["id"] == req["id"]
+    )
+    assert row["status"] == "executed"
+    assert row["result"]["after"] == {"quantity": 120}
+    assert row["result"]["verified"] is True
+    assert row["decided_device"] == "iPhone"
+    assert row["executed_at"]

@@ -29,6 +29,7 @@ from app.core import (
     gmail_service,
     memory_service,
 )
+from app.core import shopify_action_registry as _shopify_actions
 from app.core.memory_scope import MEMORY_SCOPES
 from app.core.orchestrator import orchestrator
 from app.db.models.company import Company
@@ -474,16 +475,36 @@ async def _sync_store(current_user, db: Session, *, company_id: str) -> str:
 
 
 #: change_type -> the registered shopify capability action it proposes.
-_STORE_CHANGES = {
+#: Friendly change_type -> action name. The short aliases are what the model
+#: (and a person speaking to their phone) actually says; every action in the
+#: registry is also addressable by its own name, so the tool never has to be
+#: edited again when an action is added.
+_STORE_CHANGE_ALIASES = {
     "inventory": "update_inventory",
     "price": "update_price",
+    "compare_at_price": "update_compare_at_price",
     "product": "update_product",
+    "details": "update_product_details",
     "seo": "update_seo",
-    "images": "update_images",
+    "images": "add_images",
     "draft_product": "create_draft_product",
+    "duplicate": "duplicate_product",
     "publish": "publish_product",
+    "unpublish": "unpublish_product",
+    "archive": "archive_product",
+    "restore": "restore_product",
     "collection": "create_collection",
     "discount": "create_discount",
+    "variant": "update_variant",
+    "weight": "update_weight",
+    "tracking": "set_inventory_tracking",
+    "oversell": "set_continue_selling",
+    "page": "create_page",
+    "menu": "update_menu",
+}
+_STORE_CHANGES = {
+    **{name: name for name in _shopify_actions.ACTIONS},
+    **_STORE_CHANGE_ALIASES,
 }
 
 
