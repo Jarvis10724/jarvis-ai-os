@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.core import approval_brief, sync_service
+from app.core import approval_brief
 from app.core.capabilities_registry import CAPABILITIES, CapabilityDefinition, get_capability
 from app.db.models.capability import (
     APPROVAL_STATUSES,
@@ -128,19 +128,6 @@ def _default_config_view(capability_name: str, company_id: str | None, capabilit
         "health_message": None,
         "last_health_check_at": None,
     }
-
-
-def _announce(req: ApprovalRequest, detail: str) -> None:
-    """Tell every connected client of this account that the queue moved.
-
-    Called from each approval-lifecycle write rather than from the endpoints,
-    so a proposal raised by chat, an agent, the Work Queue, or a REST call all
-    reach every device identically — there is no path that changes an approval
-    without announcing it.
-    """
-    sync_service.mark_changed(
-        company_id=req.company_id, kind="approvals", owner_id=req.owner_id, detail=detail
-    )
 
 
 def serialize_approval(req: ApprovalRequest) -> dict:
@@ -452,7 +439,6 @@ def propose_action(
         action="proposed",
         after=serialize_approval(req),
     )
-    _announce(req, "proposed")
     return serialize_approval(req)
 
 
@@ -596,7 +582,6 @@ def approve_action(db: Session, *, owner_id: str, request_id: str, decided_by: s
     )
     _record_approval_timeline(db, req, decision="approved", note=note)
     _record_workspace_history(db, req, decision="approved", note=note)
-    _announce(req, "approved")
     return after
 
 
@@ -626,7 +611,6 @@ def reject_action(db: Session, *, owner_id: str, request_id: str, decided_by: st
     )
     _record_approval_timeline(db, req, decision="rejected", note=note)
     _record_workspace_history(db, req, decision="rejected", note=note)
-    _announce(req, "rejected")
     return after
 
 
@@ -665,7 +649,6 @@ def mark_executed(
         after=after,
         note=result_note,
     )
-    _announce(req, "executed")
     return after
 
 
