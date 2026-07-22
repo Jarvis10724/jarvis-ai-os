@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     projects,
     settings,
     shopify,
+    sync,
     tasks,
     work_queue,
     workspace_import,
@@ -31,6 +32,7 @@ from app.auth.router import router as auth_router
 api_router = APIRouter()
 
 api_router.include_router(health.router)
+api_router.include_router(sync.router)
 api_router.include_router(auth_router)
 api_router.include_router(chat.router)
 api_router.include_router(plugins.router)

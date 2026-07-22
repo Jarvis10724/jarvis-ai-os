@@ -12,6 +12,7 @@ import { PromptProvider } from "@/context/PromptContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/context/ToastContext";
 
+import { SyncProvider } from "@/context/SyncContext";
 import "@/index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -21,7 +22,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <ToastProvider>
           <PromptProvider>
             <AuthProvider>
-              <CompanyProvider>
+              {/* One connection to the backend's change feed, shared by the
+                  whole app. Inside AuthProvider because it needs the session;
+                  outside the workspace providers because a workspace switch
+                  must not tear the stream down. */}
+              <SyncProvider>
+                <CompanyProvider>
                 <ProjectProvider>
                   <AssistantStatusProvider>
                     {/* Every framer-motion animation honors the OS
@@ -31,7 +37,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     </MotionConfig>
                   </AssistantStatusProvider>
                 </ProjectProvider>
-              </CompanyProvider>
+                </CompanyProvider>
+              </SyncProvider>
             </AuthProvider>
           </PromptProvider>
         </ToastProvider>

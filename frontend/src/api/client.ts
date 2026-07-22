@@ -71,6 +71,14 @@ function getToken(): string | null {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
+/** The access token, for the sync stream — which authenticates by header like
+ *  every other call, rather than becoming a second auth path. (The token is
+ *  the one thing that legitimately lives client-side: it identifies this
+ *  browser, it isn't application state.) */
+export function getAccessToken(): string | null {
+  return getToken();
+}
+
 export function setToken(token: string | null) {
   if (token) localStorage.setItem(ACCESS_TOKEN_KEY, token);
   else localStorage.removeItem(ACCESS_TOKEN_KEY);

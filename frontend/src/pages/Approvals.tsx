@@ -20,6 +20,7 @@ import { api, ApiError } from "@/api/client";
 import ModulePageHeader from "@/components/ModulePageHeader";
 import StatusPill from "@/components/StatusPill";
 import { useCompany } from "@/context/CompanyContext";
+import { useSyncedResource } from "@/context/SyncContext";
 import { useToast } from "@/context/ToastContext";
 import type {
   ApprovalDecisionResult,
@@ -109,34 +110,22 @@ export default function ApprovalsPage() {
     loadCapabilities();
   }, [loadCapabilities]);
 
-  /* Keep the phone and the desktop looking at the same queue.
+  /* Keep every device looking at the same queue.
    *
-   * The queue itself already lives in the backend database — nothing here is
-   * client-side state — so both devices are reading one source of truth. What
-   * was missing is that a device only read it on mount: a proposal raised on
-   * the phone sat invisible on the desktop until someone refreshed.
+   * This page owns no timer and no polling logic of its own. It names the kind
+   * of state it displays and the shared change feed re-runs the loader the
+   * moment an approval moves — proposed, approved, rejected, executed — on any
+   * device. Reconnects, sleep/wake and backgrounding are handled once, in
+   * SyncContext, rather than re-solved here.
    *
-   * Short polling, not a socket: this app has no WebSocket transport, and an
-   * approval queue changes a few times an hour, not a few times a second. A
-   * refresh on focus covers the common case (pick the phone up, it's current);
-   * the interval covers a screen left open on the desk. Skipped while a
-   * decision is in flight so a poll can't clobber the row being decided. */
+   * A decision in flight is skipped so a burst can't clobber the row being
+   * decided; the feed will fire again when that decision lands. */
   const busyRef = useRef<string | null>(null);
   busyRef.current = busy;
-  useEffect(() => {
-    const refresh = () => {
-      if (document.visibilityState !== "visible" || busyRef.current) return;
-      load({ silent: true });
-    };
-    const timer = window.setInterval(refresh, 8000);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [load]);
+  useSyncedResource("approvals", () => {
+    if (busyRef.current) return;
+    load({ silent: true });
+  });
 
   /** Report what actually happened — carried out, consented, failed, re-planned. */
   function reportOutcome(result: ApprovalDecisionResult, fallback: string) {
