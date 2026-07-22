@@ -40,6 +40,7 @@ import type {
   BrandProduct,
   BrandCollection,
   BrandBrainSyncResult,
+  WorkRun,
   WorkspaceArtifact,
   WorkspaceConfig,
   WorkspaceDetail,
@@ -408,6 +409,13 @@ export const api = {
   syncBrandBrain: (companyId: string) =>
     apiRequest<BrandBrainSyncResult>(`/brand-brain/sync?company_id=${encodeURIComponent(companyId)}`, { method: "POST" }),
 
+  // Autonomous Work Queue — plan a request into subtasks, then stream execution.
+  createWorkPlan: (request: string, companyId?: string | null) =>
+    apiRequest<WorkRun>("/work-queue", { method: "POST", body: { request, company_id: companyId ?? null } }),
+  getWorkRun: (id: string) => apiRequest<WorkRun>(`/work-queue/${id}`),
+  listWorkRuns: (companyId?: string) =>
+    apiRequest<WorkRun[]>(`/work-queue${companyId ? `?company_id=${encodeURIComponent(companyId)}` : ""}`),
+
   // Quick-Action workspaces — persistent, streaming "studio" sessions.
   listWorkspaceActions: () => apiRequest<WorkspaceConfig[]>("/workspaces/actions"),
   listWorkspaces: (
@@ -746,6 +754,63 @@ export function streamWebsiteBuild(
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         handlers.onError(err instanceof Error ? err.message : "Build stream failed.");
+      }
+    }
+  })();
+  return () => controller.abort();
+}
+
+export interface WorkEvent {
+  type: "run" | "subtask" | "done" | "error";
+  id?: string;
+  title?: string;
+  status?: string;
+  result?: string | null;
+  approval_id?: string | null;
+  message?: string;
+}
+
+/**
+ * Streams the Autonomous Work Queue as it works through a run's subtasks —
+ * one event per state change (working / waiting_approval / complete) and a
+ * final done. Returns an abort function.
+ */
+export function streamWork(
+  runId: string,
+  handlers: { onEvent: (e: WorkEvent) => void; onDone: () => void; onError: (msg: string) => void }
+): () => void {
+  const controller = new AbortController();
+  (async () => {
+    try {
+      const resp = await openStream(`${API_BASE}/work-queue/${runId}/stream`, {}, controller.signal);
+      if (!resp.ok || !resp.body) {
+        handlers.onError(`Work run failed (${resp.status}).`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line.slice(5).trim()) as WorkEvent;
+            handlers.onEvent(event);
+            if (event.type === "done") handlers.onDone();
+          } catch {
+            /* ignore malformed frame */
+          }
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        handlers.onError(err instanceof Error ? err.message : "Work stream failed.");
       }
     }
   })();

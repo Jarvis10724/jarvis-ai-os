@@ -769,6 +769,27 @@ export interface BrandCollection {
   image_url: string | null;
 }
 
+// Autonomous Work Queue (Phase 3) — a request decomposed into subtasks Jarvis
+// works through, each tracked Planned → Working → Waiting for Approval → Complete.
+export type WorkSubtaskStatus = "planned" | "working" | "waiting_approval" | "complete";
+export interface WorkSubtask {
+  id: string;
+  title: string;
+  real_world: boolean;
+  status: WorkSubtaskStatus;
+  result: string | null;
+  approval_id: string | null;
+}
+export interface WorkRun {
+  id: string;
+  company_id: string | null;
+  objective: string;
+  status: string; // planned | running | waiting | completed
+  result: string | null;
+  subtasks: WorkSubtask[];
+  created_at: string | null;
+}
+
 export interface BrandBrainSyncResult {
   synced_at: string;
   store_name: string | null;
