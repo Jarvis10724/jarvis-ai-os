@@ -31,3 +31,8 @@ class AgentRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: a Project the agent created/attached its work to, if any.
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    #: For the Autonomous Work Queue (agent_key="work_queue"): the ordered
+    #: subtasks a large request was decomposed into, each tracked through
+    #: planned → working → waiting_approval → complete. JSON list; NULL for
+    #: ordinary single-objective agent runs. Additive/backward-compatible.
+    subtasks_json: Mapped[str | None] = mapped_column(Text, nullable=True)

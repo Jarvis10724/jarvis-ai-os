@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     settings,
     shopify,
     tasks,
+    work_queue,
     workspaces,
 )
 from app.auth.router import router as auth_router
@@ -49,3 +50,4 @@ api_router.include_router(drive.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(shopify.router)
 api_router.include_router(brand_brain.router)
+api_router.include_router(work_queue.router)
