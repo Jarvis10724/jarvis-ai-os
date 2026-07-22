@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -67,21 +67,28 @@ export default function ApprovalsPage() {
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
   const [busyCapability, setBusyCapability] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [q, h] = await Promise.all([
-        api.approvalQueue(activeCompanyId),
-        api.approvalHistory(activeCompanyId).catch(() => []),
-      ]);
-      setQueue(q);
-      setHistory(h);
-    } catch (err) {
-      toast.push(err instanceof ApiError ? err.message : "Couldn't load the approval queue.", "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCompanyId, toast]);
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
+      try {
+        const [q, h] = await Promise.all([
+          api.approvalQueue(activeCompanyId),
+          api.approvalHistory(activeCompanyId).catch(() => []),
+        ]);
+        setQueue(q);
+        setHistory(h);
+      } catch (err) {
+        // A silent background refresh must not nag: the visible state is still
+        // the last good one, and the next tick retries.
+        if (!opts?.silent) {
+          toast.push(err instanceof ApiError ? err.message : "Couldn't load the approval queue.", "error");
+        }
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+    },
+    [activeCompanyId, toast],
+  );
 
   const loadCapabilities = useCallback(async () => {
     setCapabilitiesLoading(true);
@@ -101,6 +108,35 @@ export default function ApprovalsPage() {
     loadCapabilities();
   }, [loadCapabilities]);
 
+  /* Keep the phone and the desktop looking at the same queue.
+   *
+   * The queue itself already lives in the backend database — nothing here is
+   * client-side state — so both devices are reading one source of truth. What
+   * was missing is that a device only read it on mount: a proposal raised on
+   * the phone sat invisible on the desktop until someone refreshed.
+   *
+   * Short polling, not a socket: this app has no WebSocket transport, and an
+   * approval queue changes a few times an hour, not a few times a second. A
+   * refresh on focus covers the common case (pick the phone up, it's current);
+   * the interval covers a screen left open on the desk. Skipped while a
+   * decision is in flight so a poll can't clobber the row being decided. */
+  const busyRef = useRef<string | null>(null);
+  busyRef.current = busy;
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || busyRef.current) return;
+      load({ silent: true });
+    };
+    const timer = window.setInterval(refresh, 8000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [load]);
+
   /** Report what actually happened — carried out, consented, failed, re-planned. */
   function reportOutcome(result: ApprovalDecisionResult, fallback: string) {
     if (result.execution_error) {
@@ -117,6 +153,12 @@ export default function ApprovalsPage() {
   }
 
   const decide: DecideFn = async (request, approve, opts) => {
+    // A second tap while the first is in flight must not send a second
+    // decision — on a phone that's one approval producing two store writes.
+    // The buttons are disabled too; this is the guard that doesn't depend on
+    // a re-render having happened yet.
+    if (busyRef.current) return;
+    busyRef.current = request.id;
     setBusy(request.id);
     try {
       const result = approve
@@ -371,6 +413,89 @@ function PlanCard({
   );
 }
 
+type PreviewField = { field: string; before: unknown; after: unknown };
+type StoreChangePreview = {
+  resolved?: boolean;
+  product?: string;
+  field?: string;
+  before?: unknown;
+  after?: unknown;
+  fields?: PreviewField[];
+  warnings?: string[];
+};
+
+function show(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * Current value against proposed value, for a storefront change.
+ *
+ * This is what the approval is actually FOR, so it renders as a side-by-side
+ * block rather than being buried in the payload JSON — legible at 375px, where
+ * most of these get decided. An unresolved preview says so instead of showing
+ * a blank "before" that would read as "currently empty".
+ */
+function ChangePreview({ payload }: { payload: Record<string, unknown> | null | undefined }) {
+  const preview = payload?._preview as StoreChangePreview | undefined;
+  if (!preview) return null;
+
+  if (!preview.resolved) {
+    return (
+      <p className="mt-2.5 rounded-xl border border-jarvis-amber/40 bg-jarvis-amber/10 p-2.5 text-xs text-jarvis-amber">
+        Couldn't match {preview.product ? `"${preview.product}"` : "this item"} to a product in the synced
+        catalog, so the current value is unknown. Re-sync the store before approving.
+      </p>
+    );
+  }
+
+  const rows: PreviewField[] =
+    preview.fields && preview.fields.length > 0
+      ? preview.fields
+      : preview.field
+        ? [{ field: preview.field, before: preview.before, after: preview.after }]
+        : [];
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="mt-2.5 rounded-xl border border-jarvis-border/60 bg-jarvis-panel2/30 p-3">
+      {preview.product && (
+        <p className="mb-2 truncate text-xs font-semibold text-jarvis-text">{preview.product}</p>
+      )}
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.field}>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-jarvis-faint">
+              {row.field.replace(/_/g, " ")}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="min-w-0 rounded-lg bg-jarvis-panel3/40 px-2 py-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-jarvis-faint">Current</p>
+                <p className="break-words font-data text-xs text-jarvis-muted line-through decoration-jarvis-rose/50">
+                  {show(row.before)}
+                </p>
+              </div>
+              <div className="min-w-0 rounded-lg border border-jarvis-emerald/30 bg-jarvis-emerald/10 px-2 py-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-jarvis-faint">Proposed</p>
+                <p className="break-words font-data text-xs font-semibold text-jarvis-emerald">
+                  {show(row.after)}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {(preview.warnings ?? []).map((w, i) => (
+        <p key={i} className="mt-2 text-[11px] text-jarvis-amber">
+          {w}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 /** One request, with everything a human needs in order to decide it. */
 function RequestCard({
   request,
@@ -446,6 +571,9 @@ function RequestCard({
           </button>
         )}
       </div>
+
+      {/* The diff, always visible — collapsed or not. It is the decision. */}
+      <ChangePreview payload={request.payload} />
 
       {expanded && (
         <div className="mt-2.5 space-y-2.5 text-xs">
@@ -546,27 +674,30 @@ function RequestCard({
           </>
         ) : (
           <>
+            {/* Full-width and 44px tall on a phone, inline on a desktop. These
+                commit real changes to a live store — they should be hard to
+                mis-tap and obviously busy once tapped. */}
             <button
               onClick={() => onDecide(request, true)}
               disabled={working}
-              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-3 py-2 text-xs font-semibold text-jarvis-emerald transition hover:bg-jarvis-emerald/20 disabled:opacity-40"
+              className="press-scale flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-jarvis-emerald/40 bg-jarvis-emerald/10 px-3 py-2 text-sm font-semibold text-jarvis-emerald transition hover:bg-jarvis-emerald/20 disabled:opacity-40 sm:min-h-0 sm:flex-none sm:text-xs"
             >
-              {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              Approve
+              {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {working ? "Working…" : "Approve"}
             </button>
             <button
               onClick={() => onDecide(request, false)}
               disabled={working}
-              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-xs font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40"
+              className="press-scale flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-sm font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40 sm:min-h-0 sm:flex-none sm:text-xs"
             >
-              <X className="h-3.5 w-3.5" /> Reject
+              <X className="h-4 w-4" /> Reject
             </button>
             <button
               onClick={startEditing}
               disabled={working}
-              className="press-scale flex items-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-xs font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40"
+              className="press-scale flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-jarvis-border px-3 py-2 text-sm font-semibold text-jarvis-muted transition hover:bg-jarvis-panel2/60 disabled:opacity-40 sm:min-h-0 sm:text-xs"
             >
-              <Pencil className="h-3.5 w-3.5" /> Edit
+              <Pencil className="h-4 w-4" /> Edit
             </button>
           </>
         )}

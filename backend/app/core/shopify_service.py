@@ -275,3 +275,37 @@ async def list_metaobjects(db, *, owner_id, company_id, metaobject_type, first=2
         db, owner_id=owner_id, company_id=company_id, action_type="list_metaobjects",
         query=_METAOBJECTS_Q, variables={"type": metaobject_type, "first": first},
     )
+
+
+# --- The write path -------------------------------------------------------
+# Phase 2. Still the ONLY place that touches the Admin client, so workspace
+# isolation and the audit trail keep applying in exactly one place. The
+# difference from _run() above: an approval-gated action can't go through
+# authorize_direct_action() (that function exists to REFUSE approval-gated
+# actions), so the caller must have an approved ApprovalRequest behind it.
+# shopify_write_service.execute is the only caller, and capability_executors
+# only invokes it after approve_action.
+
+
+async def run_approved_query(
+    db: Session, *, owner_id: str, company_id: str | None, query: str, variables: dict | None = None
+) -> dict:
+    """A read issued as part of committing an approved write — the live
+    before-value and the post-write read-back. Isolation still applies."""
+    _assert_workspace(company_id)
+    client = ShopifyAdminClient()
+    return await client.execute(query, variables)
+
+
+async def run_approved_mutation(
+    db: Session, *, owner_id: str, company_id: str | None, action_type: str,
+    query: str, variables: dict | None = None,
+) -> dict:
+    """Send a mutation for an already-approved action, and audit it."""
+    _assert_workspace(company_id)
+    client = ShopifyAdminClient()
+    data = await client.execute(query, variables)
+    capability_service.log_capability_action(
+        db, owner_id=owner_id, capability_name=CAPABILITY_NAME, action_type=action_type, company_id=company_id
+    )
+    return data

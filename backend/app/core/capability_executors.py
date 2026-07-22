@@ -45,7 +45,9 @@ async def execute_if_registered(db: Session, *, owner_id: str, approval: dict) -
         owner_id=owner_id,
         company_id=approval["company_id"],
         action_type=approval["action_type"],
-        payload=approval["payload"] or {},
+        # `_approval_id` lets an executor tie its own audit record back to the
+        # approval that authorized it. Executors ignore keys they don't use.
+        payload={**(approval["payload"] or {}), "_approval_id": approval["id"]},
     )
     return capability_service.mark_executed(
         db, owner_id=owner_id, request_id=approval["id"], result_note=str(result)[:500]

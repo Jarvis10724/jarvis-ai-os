@@ -20,6 +20,7 @@ a capability registers what "actually do it" means. A capability with no
 executor registered stays 'approved' — consent recorded, nothing performed —
 which is the honest resting state, never a fabricated 'executed'.
 """
+import asyncio
 import json
 
 from sqlalchemy.orm import Session
@@ -106,16 +107,66 @@ async def decide(
     approve: bool,
     payload: dict | None = None,
     note: str | None = None,
+    device: str | None = None,
 ) -> dict:
     """Decide ONE request. `payload` edits it first — "edit then approve" is a
     single reviewed decision, not an edit that quietly loses its approval.
 
     On approve, the registered executor runs immediately; if the capability has
     none, the request stays 'approved' (consent recorded, nothing performed).
-    On reject, the plan this step belongs to is asked to re-plan around it."""
+    On reject, the plan this step belongs to is asked to re-plan around it.
+
+    `device` records where the decision came from (iPhone or desktop) — the
+    same request is visible on both, so the audit needs to say which one
+    actually decided it."""
+    async with _decision_lock(request_id):
+        return await _decide_once(
+            db, owner_id=owner_id, request_id=request_id, approve=approve,
+            payload=payload, note=note, device=device,
+        )
+
+
+#: One approval, one execution. Two taps on a phone — or the same request
+#: approved on the phone and the desktop at once — arrive as concurrent
+#: requests that can BOTH read status='pending' before either writes, and the
+#: second one would send a second mutation to Shopify. These locks serialize
+#: decisions per request so the second caller finds the real status and is
+#: told it's already decided.
+#:
+#: This is a single-process guard, which is what this deployment is (one
+#: uvicorn worker, one SQLite file). The status check inside is the durable
+#: half: it survives restarts and would still catch a duplicate across
+#: processes, it just wouldn't order them.
+_DECISION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _decision_lock(request_id: str) -> asyncio.Lock:
+    return _DECISION_LOCKS.setdefault(request_id, asyncio.Lock())
+
+
+async def _decide_once(
+    db: Session,
+    *,
+    owner_id: str,
+    request_id: str,
+    approve: bool,
+    payload: dict | None = None,
+    note: str | None = None,
+    device: str | None = None,
+) -> dict:
     req = _owned(db, request_id, owner_id)
     if req.status != "pending":
         raise ValidationError(f"Approval request is '{req.status}', not pending.")
+
+    if device:
+        db.add(
+            CapabilityAuditLog(
+                owner_id=owner_id, company_id=req.company_id, capability_name=req.capability_name,
+                approval_request_id=request_id, action="decided",
+                note=f"{'approved' if approve else 'rejected'} from {device}"[:500],
+            )
+        )
+        db.commit()
 
     if payload is not None:
         capability_service.edit_action(db, owner_id=owner_id, request_id=request_id, payload=payload)

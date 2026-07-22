@@ -202,3 +202,269 @@ def test_proposing_a_change_attaches_the_preview_to_the_approval(client):
     assert step["payload"]["_preview"]["before"] == 0
     assert step["payload"]["_preview"]["after"] == 120
     assert "0" in step["expected_outcome"] and "120" in step["expected_outcome"]
+
+
+# --- The live commit sequence ---------------------------------------------
+#
+# Shopify is mocked at shopify_service's two doors (run_approved_query for
+# reads, run_approved_mutation for writes) so the SEQUENCE can be asserted:
+# read live -> refuse if stale -> mutate -> read back -> refuse unless the
+# read-back matches. None of these tests touch a real store.
+
+
+class _FakeStore:
+    """A stand-in Shopify that only changes when a mutation tells it to."""
+
+    def __init__(self, **product):
+        self.product = {
+            "id": "gid://shopify/Product/1",
+            "title": "TEST | Draft Product",
+            "status": "DRAFT",
+            "description": "Old copy",
+            "descriptionHtml": "<p>Old copy</p>",
+            "totalInventory": 5,
+            "variants": {"nodes": [{"id": "gid://shopify/ProductVariant/1", "price": "10.00",
+                                    "inventoryItem": {"id": "gid://shopify/InventoryItem/1"}}]},
+            **product,
+        }
+        self.mutations: list[dict] = []
+        self.applies = True  # flip to False to simulate a write that doesn't stick
+
+    async def query(self, _db, **kwargs):
+        if "locations" in kwargs["query"]:
+            return {"locations": {"nodes": [{"id": "gid://shopify/Location/1", "name": "Main"}]}}
+        return {"product": self.product}
+
+    async def mutate(self, _db, **kwargs):
+        self.mutations.append(kwargs)
+        variables = kwargs["variables"]
+        if self.applies:
+            if "input" in variables and "quantities" in variables["input"]:
+                self.product["totalInventory"] = variables["input"]["quantities"][0]["quantity"]
+            elif "variants" in variables:
+                self.product["variants"]["nodes"][0]["price"] = variables["variants"][0]["price"]
+            else:
+                item = variables["input"]
+                for key, target in (("title", "title"), ("status", "status"), ("descriptionHtml", "descriptionHtml")):
+                    if key in item:
+                        self.product[target] = item[key]
+        return {"productUpdate": {"userErrors": []}, "productVariantsBulkUpdate": {"userErrors": []},
+                "inventorySetQuantities": {"userErrors": []}}
+
+
+def _open_the_gates(monkeypatch):
+    monkeypatch.setattr(settings, "SHOPIFY_WRITE_ENABLED", True)
+    monkeypatch.setattr(settings, "SHOPIFY_SCOPES", "read_products,read_inventory,write_products,write_inventory")
+
+
+def _wire(monkeypatch, store):
+    monkeypatch.setattr(sw.shopify_service, "run_approved_query", store.query)
+    monkeypatch.setattr(sw.shopify_service, "run_approved_mutation", store.mutate)
+
+
+def _commit(company, action, payload):
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return asyncio.get_event_loop().run_until_complete(
+            sw.execute(db, owner_id="u", company_id=company, action_type=action, payload=payload)
+        )
+    finally:
+        db.close()
+
+
+def _setup(client, email, monkeypatch, **product):
+    headers = _login(client, email)
+    company = client.post(f"{API}/companies", json={"name": "SPN Group LLC"}, headers=headers).json()["id"]
+    store = _FakeStore(**product)
+    # The synced mirror reflects what the store currently holds — that's what a
+    # real sync produces, and the stale check exists to catch it when it doesn't.
+    _seed_product(company, title="TEST | Draft Product", inventory=5, price=10.0)
+    _mirror(company, store)
+    _open_the_gates(monkeypatch)
+    _wire(monkeypatch, store)
+    return company, store
+
+
+def _mirror(company_id, store):
+    from app.db.models.brand_brain import BrandProduct
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.query(BrandProduct).filter(BrandProduct.company_id == company_id).first()
+        row.status = store.product["status"]
+        row.description = store.product["descriptionHtml"]
+        db.commit()
+    finally:
+        db.close()
+
+
+def _preview_of(company, action, changes):
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return sw.build_preview(db, company_id=company, action_type=action, changes=changes)
+    finally:
+        db.close()
+
+
+def test_a_committed_change_is_verified_by_reading_it_back(client, monkeypatch):
+    company, store = _setup(client, "sw-live-inv@example.com", monkeypatch)
+    preview = _preview_of(company, "update_inventory", {"product": "TEST", "quantity": 120})
+
+    result = _commit(company, "update_inventory", {"product": "TEST", "quantity": 120, "_preview": preview})
+
+    assert result["committed"] is True and result["changed"] is True
+    assert result["verified"] is True
+    assert result["before"] == {"quantity": 5} and result["after"] == {"quantity": 120}
+    assert len(store.mutations) == 1  # one approval, one mutation
+
+
+def test_title_description_and_status_all_commit(client, monkeypatch):
+    company, store = _setup(client, "sw-live-product@example.com", monkeypatch)
+    preview = _preview_of(
+        company, "update_product",
+        {"product": "TEST", "title": "TEST | Renamed", "description": "New copy", "status": "active"},
+    )
+    result = _commit(company, "update_product", {
+        "product": "TEST", "title": "TEST | Renamed", "description": "New copy",
+        "status": "active", "_preview": preview,
+    })
+    assert result["verified"] is True
+    assert store.product["title"] == "TEST | Renamed"
+    assert store.product["status"] == "ACTIVE"
+
+
+def test_price_commits_through_the_variant(client, monkeypatch):
+    company, store = _setup(client, "sw-live-price@example.com", monkeypatch)
+    preview = _preview_of(company, "update_price", {"product": "TEST", "price": "42.00"})
+    result = _commit(company, "update_price", {"product": "TEST", "price": "42.00", "_preview": preview})
+    assert result["verified"] is True
+    assert store.product["variants"]["nodes"][0]["price"] == "42.00"
+
+
+def test_a_write_that_does_not_stick_is_not_marked_completed(client, monkeypatch):
+    """The read-back is the proof. Shopify accepting the call is not enough."""
+    import pytest
+
+    company, store = _setup(client, "sw-live-nostick@example.com", monkeypatch)
+    store.applies = False  # mutation returns success but nothing changes
+    preview = _preview_of(company, "update_inventory", {"product": "TEST", "quantity": 120})
+
+    with pytest.raises(ValidationError) as exc:
+        _commit(company, "update_inventory", {"product": "TEST", "quantity": 120, "_preview": preview})
+    assert "does NOT show the new value" in str(exc.value)
+    assert "Not marking this as completed" in str(exc.value)
+
+
+def test_shopify_user_errors_stop_the_commit(client, monkeypatch):
+    import pytest
+
+    company, store = _setup(client, "sw-live-errors@example.com", monkeypatch)
+
+    async def rejecting(_db, **_k):
+        return {"productUpdate": {"userErrors": [{"field": "title", "message": "Title is too long"}]}}
+
+    monkeypatch.setattr(sw.shopify_service, "run_approved_mutation", rejecting)
+    preview = _preview_of(company, "update_product", {"product": "TEST", "title": "X" * 300})
+    with pytest.raises(ValidationError) as exc:
+        _commit(company, "update_product", {"product": "TEST", "title": "X" * 300, "_preview": preview})
+    assert "Title is too long" in str(exc.value)
+
+
+def test_a_stale_approval_is_refused(client, monkeypatch):
+    """Someone edited the product in Shopify Admin after the preview was built.
+    The operator approved a diff that no longer describes reality, so
+    committing would silently overwrite a change they never saw."""
+    import pytest
+
+    company, store = _setup(client, "sw-live-stale@example.com", monkeypatch)
+    preview = _preview_of(company, "update_price", {"product": "TEST", "price": "42.00"})
+    assert preview["before"] == 10.0
+    store.product["variants"]["nodes"][0]["price"] = "19.99"  # changed in Shopify meanwhile
+
+    with pytest.raises(ValidationError) as exc:
+        _commit(company, "update_price", {"product": "TEST", "price": "42.00", "_preview": preview})
+    assert "Stale approval" in str(exc.value)
+    assert "Nothing was sent to Shopify" in str(exc.value)
+    assert store.mutations == []
+
+
+def test_a_value_that_is_already_correct_sends_no_mutation(client, monkeypatch):
+    company, store = _setup(client, "sw-live-noop@example.com", monkeypatch)
+    preview = _preview_of(company, "update_inventory", {"product": "TEST", "quantity": 5})
+    result = _commit(company, "update_inventory", {"product": "TEST", "quantity": 5, "_preview": preview})
+    assert result["changed"] is False and result["verified"] is True
+    assert store.mutations == []
+
+
+def test_an_invalid_status_never_reaches_shopify(client, monkeypatch):
+    import pytest
+
+    company, store = _setup(client, "sw-live-badstatus@example.com", monkeypatch)
+    preview = _preview_of(company, "update_product", {"product": "TEST", "status": "published"})
+    with pytest.raises(ValidationError) as exc:
+        _commit(company, "update_product", {"product": "TEST", "status": "published", "_preview": preview})
+    assert "isn't a Shopify product status" in str(exc.value)
+    assert store.mutations == []
+
+
+def test_the_commit_is_audited_with_before_after_and_verification(client, monkeypatch):
+    from app.db.models.capability import CapabilityAuditLog
+    from app.db.session import SessionLocal
+
+    company, _ = _setup(client, "sw-live-audit@example.com", monkeypatch)
+    preview = _preview_of(company, "update_inventory", {"product": "TEST", "quantity": 120})
+    _commit(company, "update_inventory", {
+        "product": "TEST", "quantity": 120, "_preview": preview, "_approval_id": "req-123",
+    })
+
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(CapabilityAuditLog)
+            .filter(
+                CapabilityAuditLog.action == "committed:update_inventory",
+                CapabilityAuditLog.company_id == company,
+            )
+            .first()
+        )
+    finally:
+        db.close()
+    assert row is not None
+    assert row.approval_request_id == "req-123"
+    assert "5" in row.before_json
+    assert "120" in row.after_json and "verified" in row.after_json
+
+
+def test_the_local_catalog_matches_shopify_after_a_commit(client, monkeypatch):
+    """Both devices read the mirror, so it has to reflect the verified value —
+    otherwise the phone and the desktop would disagree with the store."""
+    from app.db.models.brand_brain import BrandProduct
+    from app.db.session import SessionLocal
+
+    company, _ = _setup(client, "sw-live-mirror@example.com", monkeypatch)
+    preview = _preview_of(company, "update_inventory", {"product": "TEST", "quantity": 120})
+    _commit(company, "update_inventory", {"product": "TEST", "quantity": 120, "_preview": preview})
+
+    db = SessionLocal()
+    try:
+        row = db.query(BrandProduct).filter(BrandProduct.company_id == company).first()
+        assert row.total_inventory == 120
+    finally:
+        db.close()
+
+
+def test_an_unimplemented_action_still_refuses(client, monkeypatch):
+    """Opening the gates must not make every declared action suddenly live."""
+    import pytest
+
+    _open_the_gates(monkeypatch)
+    with pytest.raises(ValidationError) as exc:
+        # write_products IS granted here, so this reaches the implementation
+        # gate rather than being stopped earlier by the scope gate.
+        _commit(None, "update_seo", {"product": "TEST", "seo_title": "New title"})
+    assert "hasn't been implemented yet" in str(exc.value)

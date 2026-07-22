@@ -301,3 +301,81 @@ def test_a_decided_request_cannot_be_decided_again(client, monkeypatch):
     client.post(f"{API}/approvals/{step['id']}/approve", json={}, headers=headers)
     again = client.post(f"{API}/approvals/{step['id']}/approve", json={}, headers=headers)
     assert again.status_code == 422
+
+
+# --- One approval, one execution ------------------------------------------
+
+
+async def test_a_double_tap_decides_once(client):
+    """Two taps on a phone arrive as two requests. The second must not run the
+    action again — for a storefront write that would be two live changes."""
+    import asyncio as _asyncio
+
+    from app.core import approval_center_service, capability_executors
+    from app.db.models.user import User
+    from app.db.session import SessionLocal
+
+    headers = _login(client, "double-tap@example.com")
+    company = client.post(f"{API}/companies", json={"name": "SPN Group LLC"}, headers=headers).json()["id"]
+    _grant(client, headers, "email", ["send"], company)
+    me = client.get(f"{API}/auth/me", headers=headers).json()
+
+    runs: list[str] = []
+
+    async def slow_executor(_db, *, owner_id, company_id, action_type, payload):
+        # Long enough that a second decision would overlap it.
+        await _asyncio.sleep(0.05)
+        runs.append(action_type)
+        return {"ok": True}
+
+    original = capability_executors._EXECUTORS.get("email")
+    capability_executors.register_executor("email", slow_executor)
+    try:
+        req = client.post(
+            f"{API}/approvals",
+            json={"capability_name": "email", "action_type": "send",
+                  "payload": {"product": "X", "quantity": 1}, "company_id": company},
+            headers=headers,
+        ).json()
+
+        db_a, db_b = SessionLocal(), SessionLocal()
+        try:
+            owner = db_a.query(User).filter(User.id == me["id"]).first().id
+            results = await _asyncio.gather(
+                approval_center_service.decide(db_a, owner_id=owner, request_id=req["id"], approve=True),
+                approval_center_service.decide(db_b, owner_id=owner, request_id=req["id"], approve=True),
+                return_exceptions=True,
+            )
+        finally:
+            db_a.close()
+            db_b.close()
+    finally:
+        if original:
+            capability_executors.register_executor("email", original)
+        else:
+            capability_executors._EXECUTORS.pop("email", None)
+
+    assert len(runs) == 1, f"the action ran {len(runs)} times"
+    assert sum(1 for r in results if isinstance(r, Exception)) == 1  # the loser was told, not silently dropped
+
+
+def test_the_deciding_device_is_recorded(client):
+    """The queue is open on the phone and the desktop; the audit has to say
+    which one the decision came from."""
+    headers = _login(client, "device-audit@example.com")
+    company = client.post(f"{API}/companies", json={"name": "SPN Group LLC"}, headers=headers).json()["id"]
+    _grant(client, headers, "email", ["send"], company)
+    req = client.post(
+        f"{API}/approvals",
+        json={"capability_name": "email", "action_type": "send",
+              "payload": {"to": "a@b.com", "subject": "s", "body": "b"}, "company_id": company},
+        headers=headers,
+    ).json()
+
+    client.post(
+        f"{API}/approvals/{req['id']}/reject",
+        json={},
+        headers={**headers, "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari"},
+    )
+    trail = client.get(f"{API}/approvals/{req['id']}/audit", headers=headers).json()
+    assert any("iPhone" in (row.get("note") or "") for row in trail), trail

@@ -9,7 +9,7 @@ health), approvals (the human-in-the-loop queue), scheduled-jobs
 (background agents' data model).
 """
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import CurrentUser
@@ -240,9 +240,22 @@ def edit_approval(
     )
 
 
+def _device(request: Request) -> str:
+    """Which device decided this — the same queue is open on the phone and the
+    desktop, so the audit has to say which one the tap came from. Derived from
+    the User-Agent; no identifiers beyond phone/tablet/desktop are recorded."""
+    ua = (request.headers.get("user-agent") or "").lower()
+    if "iphone" in ua or "android" in ua and "mobile" in ua:
+        return "iPhone" if "iphone" in ua else "Android phone"
+    if "ipad" in ua or "tablet" in ua:
+        return "tablet"
+    return "desktop"
+
+
 @approvals_router.post("/{request_id}/approve")
 async def approve(
-    request_id: str, payload: ApprovalDecision, current_user: CurrentUser, db: Session = Depends(get_db)
+    request_id: str, payload: ApprovalDecision, current_user: CurrentUser, request: Request,
+    db: Session = Depends(get_db),
 ):
     """Approve the request, then immediately run it if its capability has a
     registered executor. Supplying `payload` edits the request first — that's
@@ -259,18 +272,21 @@ async def approve(
         approve=True,
         payload=payload.payload,
         note=payload.note,
+        device=_device(request),
     )
 
 
 @approvals_router.post("/{request_id}/reject")
 async def reject(
-    request_id: str, payload: ApprovalDecision, current_user: CurrentUser, db: Session = Depends(get_db)
+    request_id: str, payload: ApprovalDecision, current_user: CurrentUser, request: Request,
+    db: Session = Depends(get_db),
 ):
     """Reject the request. If it belonged to an execution plan, the plan is
     asked to re-plan around the rejection — the result is reported back under
     `replan`."""
     return await approval_center_service.decide(
-        db, owner_id=current_user.id, request_id=request_id, approve=False, note=payload.note
+        db, owner_id=current_user.id, request_id=request_id, approve=False, note=payload.note,
+        device=_device(request),
     )
 
 

@@ -148,10 +148,16 @@ class Settings(BaseSettings):
     # payload so the UI can show a "Read-only" badge; any future write path must
     # refuse unless this is True.
     SHOPIFY_WRITE_ENABLED: bool = False
-    # The OAuth scopes the installed Shopify app actually holds. The write
-    # executor checks an action's required scope against this before attempting
-    # anything, so a change can't be "approved and committed" against a scope
-    # that was never granted. Mirrors shopify.app.toml — update both together.
+    # The OAuth scopes the installed Shopify app actually HOLDS — not the ones
+    # it asks for. The write executor checks an action's required scope against
+    # this before attempting anything, so a change can't be "approved and
+    # committed" against a scope that was never granted.
+    #
+    # shopify.app.toml now REQUESTS write_products,write_inventory, but a
+    # request is not a grant: only re-deploying the app and re-installing it on
+    # the store makes Shopify issue a token carrying them. Add them here only
+    # after that has happened, otherwise the gate would let a call through that
+    # Shopify itself would reject.
     SHOPIFY_SCOPES: str = "read_products,read_inventory"
 
     # Market data for the Investment Dashboard's watchlist/news — free-tier
