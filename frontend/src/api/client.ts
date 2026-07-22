@@ -428,6 +428,12 @@ export const api = {
       `/workspace-import/summary?company_id=${encodeURIComponent(companyId)}`
     ),
 
+  extractSection: (companyId: string, section = "brand") =>
+    apiRequest<{ section: string; supported: boolean; data?: Record<string, unknown>; message?: string }>(
+      `/workspace-import/extract?company_id=${encodeURIComponent(companyId)}&section=${section}`,
+      { method: "POST" }
+    ),
+
   // Workspace Intelligence — the AI's reading of a workspace + its evidence.
   getWorkspaceIntelligence: (companyId: string, refresh = false) =>
     apiRequest<WorkspaceIntelligence>(

@@ -400,3 +400,182 @@ def _fill_empty_section_notes(db: Session, company: Company, sections: dict[str,
         company.sections_json = json.dumps(data)
         db.commit()
     return filled
+
+
+# ---------------------------------------------------------------------------
+# Deep extraction — open the files, don't just list them
+# ---------------------------------------------------------------------------
+
+#: Hex colours as written in brand documents.
+HEX_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b")
+URL_RE = re.compile(r"https?://[^\s)>\]]+")
+SOCIAL_HOSTS = ("instagram.com", "tiktok.com", "facebook.com", "pinterest.com", "youtube.com",
+                "x.com", "twitter.com", "linkedin.com")
+
+LOGO_HINTS = ("logo", "wordmark", "brandmark", "monogram", "lockup", "icon", "favicon")
+FONT_MIMES = ("font/", "application/x-font", "application/font")
+FONT_EXTS = (".otf", ".ttf", ".woff", ".woff2")
+
+_BRAND_SYSTEM = (
+    "You extract a brand's identity from its own documents. Use ONLY the text provided. "
+    "If something isn't stated, return null for it — never invent a mission or tagline, and never "
+    "infer one from the brand name. Quote wording from the source where possible.\n"
+    'Respond with ONLY JSON: {"tagline":null,"mission":null,"brand_story":null,'
+    '"voice":null,"values":[]}'
+)
+
+
+async def _readable_text(db, *, owner_id: str, company_id: str, files: list[dict], limit: int) -> list[dict]:
+    """Open the text-extractable files and return their contents. Images and
+    PDFs report themselves as non-extractable and are skipped rather than
+    guessed at."""
+    out: list[dict] = []
+    for f in files:
+        if len(out) >= limit:
+            break
+        try:
+            doc = await drive_service.read_document(
+                db, owner_id=owner_id, company_id=company_id, file_id=f["id"]
+            )
+        except Exception:  # noqa: BLE001 - one unreadable file must not stop the pass
+            continue
+        if doc.get("extractable") and (doc.get("content") or "").strip():
+            out.append({"name": doc.get("name") or f.get("name"), "id": f["id"],
+                        "link": f.get("web_view_link"), "content": doc["content"][:6000]})
+    return out
+
+
+async def extract_brand(db: Session, *, owner_id: str, company_id: str) -> dict:
+    """Build a structured brand profile from what the workspace actually has.
+
+    Every field carries where it came from, and anything the sources don't
+    state stays null — an empty field is information ("we never wrote a
+    mission down"), an invented one is a liability.
+    """
+    company = _company(db, company_id, owner_id)
+    brief: dict = {
+        "company_name": company.name,
+        "brand_names": [],
+        "website": None,
+        "contact_email": None,
+        "currency": None,
+        "logo": None,
+        "logo_candidates": [],
+        "colors": [],
+        "fonts": [],
+        "tagline": None,
+        "mission": None,
+        "brand_story": None,
+        "voice": None,
+        "values": [],
+        "social_links": [],
+        "sources": [],
+    }
+
+    # --- Shopify: the storefront states these outright ---------------------
+    summary = brand_brain_service.get_summary(db, company_id)
+    if summary.get("exists"):
+        meta = summary.get("store_metadata") or {}
+        store_name = summary.get("store_name") or meta.get("name")
+        if store_name:
+            brief["brand_names"].append(store_name)
+        brief["website"] = ((meta.get("primaryDomain") or {}).get("url")
+                            or (f"https://{summary['store_domain']}" if summary.get("store_domain") else None))
+        brief["contact_email"] = meta.get("email")
+        brief["currency"] = summary.get("currency") or meta.get("currencyCode")
+        brief["sources"].append({"source": "shopify", "detail": "store profile"})
+    for division in json.loads(company.divisions_json or "[]"):
+        if division not in brief["brand_names"]:
+            brief["brand_names"].append(division)
+
+    # --- Drive: logo files, fonts, and readable brand documents ------------
+    try:
+        files = await drive_service.list_files(
+            db, owner_id=owner_id, company_id=company_id, max_results=200
+        )
+    except Exception:  # noqa: BLE001
+        files = []
+
+    brand_docs: list[dict] = []
+    for f in files or []:
+        name = (f.get("name") or "").lower()
+        mime = (f.get("mime_type") or "").lower()
+        entry = {"name": f.get("name"), "id": f.get("id"), "link": f.get("web_view_link"), "mime": mime}
+        if any(h in name for h in LOGO_HINTS) and "folder" not in mime:
+            brief["logo_candidates"].append(entry)
+        if mime.startswith(FONT_MIMES) or name.endswith(FONT_EXTS):
+            if f.get("name") not in brief["fonts"]:
+                brief["fonts"].append(f.get("name"))
+        if classify_section(f.get("name"), mime) == "brand" and "folder" not in mime:
+            brand_docs.append(f)
+
+    # The most specific logo candidate wins; an image beats a folder or doc.
+    images = [c for c in brief["logo_candidates"] if c["mime"].startswith("image/")]
+    brief["logo"] = (images or brief["logo_candidates"] or [None])[0]
+    if brief["logo"]:
+        brief["sources"].append({"source": "drive", "detail": f"logo file: {brief['logo']['name']}"})
+
+    texts = await _readable_text(db, owner_id=owner_id, company_id=company_id, files=brand_docs, limit=6)
+    corpus = "\n\n".join(f"--- {t['name']} ---\n{t['content']}" for t in texts)
+
+    # Colours and links are lifted verbatim — no interpretation needed.
+    for hexcode in HEX_RE.findall(corpus):
+        code = hexcode.upper()
+        if code not in brief["colors"]:
+            brief["colors"].append(code)
+    for url in URL_RE.findall(corpus):
+        if any(host in url for host in SOCIAL_HOSTS) and url not in brief["social_links"]:
+            brief["social_links"].append(url.rstrip(".,"))
+    for t in texts:
+        brief["sources"].append({"source": "drive", "detail": t["name"], "link": t["link"]})
+
+    # --- Wording: only what the documents actually say ---------------------
+    if corpus.strip():
+        from app.ai_providers.base import Message
+        from app.ai_providers.factory import get_ai_provider
+
+        try:
+            result = await get_ai_provider().complete(
+                messages=[
+                    Message(role="system", content=_BRAND_SYSTEM),
+                    Message(role="user", content=corpus[:24000]),
+                ],
+                max_tokens=1200,
+                temperature=0.1,
+            )
+            raw = result.text.strip()
+            if "```" in raw:
+                raw = raw.split("```")[1]
+                raw = raw[4:] if raw.lstrip().startswith("json") else raw
+            a, b = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[a : b + 1]) if a >= 0 and b > a else {}
+            for key in ("tagline", "mission", "brand_story", "voice"):
+                if data.get(key):
+                    brief[key] = data[key]
+            if data.get("values"):
+                brief["values"] = data["values"]
+        except Exception as exc:  # noqa: BLE001
+            logger.error("brand_extract_failed", error=str(exc))
+
+    _store_section_data(db, company, "brand", brief)
+    return brief
+
+
+def _store_section_data(db: Session, company: Company, section: str, data: dict) -> None:
+    """Persist structured knowledge on the section, alongside (never over) the
+    operator's own notes."""
+    try:
+        sections = json.loads(company.sections_json) if company.sections_json else {}
+    except (TypeError, ValueError):
+        sections = {}
+    entry = sections.get(section) or {}
+    existing = entry.get("data") or {}
+    # A value a human set is never replaced by an extracted one.
+    merged = {**data}
+    for key, value in existing.items():
+        if isinstance(value, str) and value.strip() and key in merged and not merged.get(key):
+            merged[key] = value
+    entry["data"] = merged
+    sections[section] = entry
+    company.sections_json = json.dumps(sections)
+    db.commit()

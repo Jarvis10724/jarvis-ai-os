@@ -413,6 +413,10 @@ export interface PluginSettingRead {
 export interface CompanySection {
   status: string;
   notes: string;
+  /** Structured knowledge extracted from the workspace's own connected files
+   *  (see backend app/core/workspace_import_service.extract_brand). Present
+   *  only for sections a deep extraction has run on. */
+  data?: Record<string, unknown> | null;
 }
 
 export interface CompanyOwner {

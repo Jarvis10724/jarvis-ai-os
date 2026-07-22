@@ -44,6 +44,26 @@ async def scan(current_user: CurrentUser, company_id: str = Query(...)):
     return StreamingResponse(frames(), media_type="text/event-stream")
 
 
+@router.post("/extract")
+async def extract(
+    current_user: CurrentUser,
+    company_id: str = Query(...),
+    section: str = Query("brand"),
+    db: Session = Depends(get_db),
+):
+    """Open the workspace's own files and pull STRUCTURED knowledge out of
+    them, rather than another list of links. Stored on the section, alongside
+    (never over) anything the operator wrote. Fields the sources don't state
+    come back null — an empty field is a fact, an invented one is a liability."""
+    if section != "brand":
+        return {"section": section, "supported": False,
+                "message": f"Deep extraction for '{section}' isn't implemented yet."}
+    data = await workspace_import_service.extract_brand(
+        db, owner_id=current_user.id, company_id=company_id
+    )
+    return {"section": "brand", "supported": True, "data": data}
+
+
 @router.get("/summary")
 def summary(current_user: CurrentUser, company_id: str = Query(...), db: Session = Depends(get_db)):
     """What the knowledge base currently holds for this workspace, by source

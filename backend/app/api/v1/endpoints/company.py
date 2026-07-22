@@ -82,6 +82,11 @@ DEFAULT_CHECKLISTS = {
 class SectionData(BaseModel):
     status: str = "not_started"
     notes: str = ""
+    #: Structured knowledge extracted from the workspace's own connected files
+    #: (app.core.workspace_import_service). Read-only from the UI's point of
+    #: view: it's written by extraction, never by the notes editor, so a
+    #: section update that omits it must not wipe it.
+    data: dict | None = None
 
 
 class OwnerRole(BaseModel):
@@ -276,7 +281,15 @@ def update_company(
         company.divisions_json = json.dumps(payload.divisions)
     if payload.sections is not None:
         existing = json.loads(company.sections_json) if company.sections_json else {}
-        existing.update({k: v.model_dump() for k, v in payload.sections.items()})
+        for key, value in payload.sections.items():
+            incoming = value.model_dump()
+            # Editing notes/status must never drop extracted knowledge.
+            if incoming.get("data") is None:
+                incoming.pop("data", None)
+                keep = (existing.get(key) or {}).get("data")
+                if keep is not None:
+                    incoming["data"] = keep
+            existing[key] = {**(existing.get(key) or {}), **incoming}
         company.sections_json = json.dumps(existing)
     if payload.owners is not None:
         company.owners_json = json.dumps([o.model_dump() for o in payload.owners])

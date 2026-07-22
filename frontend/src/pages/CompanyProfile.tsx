@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   FileText,
   Loader2,
+  Image as ImageIcon,
   Megaphone,
   Menu,
   Package,
@@ -445,6 +446,11 @@ export default function CompanyProfile() {
                       </select>
                     </div>
 
+                    {/* Structured knowledge the importer pulled out of this
+                        workspace's own files — shown above the free-text
+                        notes, which stay exactly as written. */}
+                    {activeTab === "brand" && <BrandProfile data={section?.data} />}
+
                     <textarea
                       value={notesDraft}
                       onChange={(e) => setNotesDraft(e.target.value)}
@@ -485,5 +491,95 @@ export default function CompanyProfile() {
           </div>
         </div>
     </main>
+  );
+}
+
+
+/** The extracted brand identity: only fields the sources actually stated. */
+function BrandProfile({ data }: { data?: Record<string, unknown> | null }) {
+  if (!data || Object.keys(data).length === 0) return null;
+  const get = <T,>(k: string): T | undefined => data[k] as T | undefined;
+  const brands = get<string[]>("brand_names") ?? [];
+  const colors = get<string[]>("colors") ?? [];
+  const fonts = get<string[]>("fonts") ?? [];
+  const social = get<string[]>("social_links") ?? [];
+  const logo = get<{ name?: string; link?: string }>("logo");
+  const website = get<string>("website");
+  const rows: [string, string | undefined][] = [
+    ["Company", get<string>("company_name")],
+    ["Brand", brands.join(" · ") || undefined],
+    ["Website", website],
+    ["Contact", get<string>("contact_email")],
+    ["Tagline", get<string>("tagline")],
+    ["Mission", get<string>("mission")],
+    ["Voice", get<string>("voice")],
+  ];
+
+  return (
+    <section className="rounded-xl border border-jarvis-border/50 bg-jarvis-panel2/20 p-3">
+      <p className="mb-2 text-[10px] uppercase tracking-widest text-jarvis-faint">
+        Extracted from your connected sources
+      </p>
+
+      {logo?.link && (
+        <a
+          href={logo.link}
+          target="_blank"
+          rel="noreferrer"
+          className="mb-2 flex items-center gap-2 text-xs font-medium"
+          style={{ color: "var(--ws-accent)" }}
+        >
+          <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{logo.name ?? "Logo"}</span>
+        </a>
+      )}
+
+      <dl className="space-y-1.5">
+        {rows.map(([label, value]) =>
+          value ? (
+            <div key={label} className="flex gap-2 text-xs">
+              <dt className="w-20 shrink-0 uppercase tracking-wide text-jarvis-faint">{label}</dt>
+              <dd className="min-w-0 flex-1 break-words text-jarvis-muted">
+                {label === "Website" ? (
+                  <a href={value} target="_blank" rel="noreferrer" style={{ color: "var(--ws-accent)" }}>
+                    {value}
+                  </a>
+                ) : (
+                  value
+                )}
+              </dd>
+            </div>
+          ) : null
+        )}
+      </dl>
+
+      {colors.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {colors.slice(0, 12).map((c) => (
+            <span key={c} className="flex items-center gap-1 text-[10px] text-jarvis-muted">
+              <span
+                className="h-4 w-4 rounded border border-jarvis-border/60"
+                style={{ backgroundColor: c }}
+              />
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {fonts.length > 0 && (
+        <p className="mt-2 text-[11px] text-jarvis-muted">
+          <span className="uppercase tracking-wide text-jarvis-faint">Fonts</span>{" "}
+          {fonts.slice(0, 8).join(", ")}
+          {fonts.length > 8 && ` +${fonts.length - 8} more`}
+        </p>
+      )}
+
+      {social.length > 0 && (
+        <p className="mt-1 truncate text-[11px] text-jarvis-muted">
+          <span className="uppercase tracking-wide text-jarvis-faint">Social</span> {social.join(" · ")}
+        </p>
+      )}
+    </section>
   );
 }
