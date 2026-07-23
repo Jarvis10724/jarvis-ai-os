@@ -137,10 +137,10 @@ export function useVoiceOrb({ companyId, onStateChange, deviceId }: UseVoiceOrbA
       // conversation, so "make it bolder" works after either.
       const outcome = await routeAndExecute(text, {
         companyId,
-        history: loadThread(companyId),
+        history: await loadThread(companyId),
         onStatus: (status) => setLiveStatus(status),
       });
-      appendTurn(companyId, text, outcome);
+      await appendTurn(companyId, text, outcome);
       setLastReplyText(outcome.reply);
       // Follow the handoff immediately — the reply is spoken while the
       // destination loads, so the work is already on screen when Jarvis stops.

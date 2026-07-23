@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Compass, CornerDownLeft, ExternalLink, SquarePen, Wrench, X } from "lucide-react";
 
 import JarvisCore from "@/components/JarvisCore";
+import { useSyncedResource } from "@/context/SyncContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useAssistantStatus } from "@/context/AssistantStatusContext";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -13,7 +14,6 @@ import {
   coreStateFor,
   loadThread,
   routeAndExecute,
-  saveThread,
   type CommandMessage,
 } from "@/lib/commandRouter";
 import type { CommandDecision, ToolCallLog } from "@/types";
@@ -47,19 +47,30 @@ export default function CoreCommandSheet({ open, onClose }: { open: boolean; onC
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // The thread is shared with voice and persisted per workspace, so it's
-  // reloaded on open (a spoken turn while the sheet was closed shows up here)
-  // and whenever the workspace changes.
+  // The thread lives in the backend and is shared with voice AND with every
+  // other device, so it's re-read on open (a turn spoken here, or typed on the
+  // phone, shows up either way) and whenever the workspace changes. There is no
+  // save-back effect: appendTurn persists each turn as it completes, so the
+  // backend is written once rather than mirrored from component state.
   useEffect(() => {
-    setMessages(loadThread(activeCompanyId));
+    let cancelled = false;
+    void loadThread(activeCompanyId).then((stored) => {
+      if (!cancelled) setMessages(stored);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [activeCompanyId, open]);
-  useEffect(() => {
-    if (messages.length) saveThread(activeCompanyId, messages);
-  }, [messages, activeCompanyId]);
+
+  // A message sent on another device lands here without a refresh, through the
+  // same shared change feed everything else uses.
+  useSyncedResource("conversations", () => {
+    void loadThread(activeCompanyId).then(setMessages);
+  });
 
   function newThread() {
     setMessages([]);
-    clearThread(activeCompanyId);
+    void clearThread(activeCompanyId);
     inputRef.current?.focus();
   }
 

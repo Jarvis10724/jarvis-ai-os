@@ -12,6 +12,7 @@ on completion, merges the model's ``jarvis-state`` block into the workspace's
 structured state so the studio panels stay filled with real generated work.
 """
 import json
+from datetime import datetime, timezone
 import time
 from urllib.parse import urlparse
 
@@ -69,6 +70,14 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceUpdate(BaseModel):
     title: str | None = None
     status: str | None = None
+
+
+class TurnsIn(BaseModel):
+    """Turns to append to a conversation. Each carries its own timestamp so an
+    imported history keeps its original ordering rather than collapsing to
+    'whenever it was uploaded'."""
+
+    turns: list[dict]
 
 
 class MessageIn(BaseModel):
@@ -193,8 +202,14 @@ def _create_task(db: Session, *, owner_id, company_id, project_id, title, status
 
 @router.get("/actions")
 def list_actions(current_user: CurrentUser):
-    """The catalog of workspace types (labels + their structured stages)."""
-    return [a.public() for a in WORKSPACE_ACTIONS.values()]
+    """The catalog of Quick Action studios (labels + their structured stages).
+
+    "chat" is excluded deliberately. It is a workspace session so that the Ask
+    Jarvis thread has a shared, backend-owned home — but it is a conversation,
+    not a studio, and listing it here would add a Quick Action tile to the UI
+    that nobody asked for.
+    """
+    return [a.public() for a in WORKSPACE_ACTIONS.values() if a.key != "chat"]
 
 
 @router.get("/recent")
@@ -364,6 +379,53 @@ def update_session(
     db.commit()
     db.refresh(s)
     return _serialize(db, s, full=True)
+
+
+@router.post("/{session_id}/turns")
+def append_turns(
+    session_id: str, payload: TurnsIn, current_user: CurrentUser, db: Session = Depends(get_db)
+):
+    """Append conversation turns and return the full stored thread.
+
+    Persistence only — this never calls the model. The Ask Jarvis thread gets
+    its reply from the command router, and both sides of the exchange are
+    recorded here so every device reads one history.
+
+    Appends are DEDUPLICATED by (role, content, ts). Two devices can send the
+    same turn — the migration uploads overlapping history, and a retry after a
+    dropped response repeats a turn — and neither should produce a duplicate
+    message in the thread.
+    """
+    s = _owned_session(db, session_id, current_user.id)
+    existing = json.loads(s.messages_json or "[]")
+    seen = {(m.get("role"), m.get("content"), m.get("ts")) for m in existing}
+
+    added = 0
+    for turn in payload.turns:
+        role = turn.get("role")
+        content = turn.get("content")
+        if not role or content is None:
+            continue
+        key = (role, content, turn.get("ts"))
+        if key in seen:
+            continue
+        seen.add(key)
+        existing.append({
+            "role": role,
+            "content": content,
+            "ts": turn.get("ts") or datetime.now(timezone.utc).isoformat(),
+        })
+        added += 1
+
+    # Oldest first, so a merged history from two devices reads in the order it
+    # actually happened rather than the order it was uploaded.
+    existing.sort(key=lambda m: m.get("ts") or "")
+    s.messages_json = json.dumps(existing)
+    db.commit()
+    db.refresh(s)
+    # Committing is what broadcasts "conversations" to every connected client
+    # (app.db.sync_hooks) — there is no second sync path here.
+    return {"id": s.id, "added": added, "messages": existing}
 
 
 @router.delete("/{session_id}", status_code=204)

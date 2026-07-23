@@ -502,6 +502,13 @@ export const api = {
   createClient: (payload: { name: string; company_id?: string | null; website?: string; notes?: string }) =>
     apiRequest<Client>("/clients", { method: "POST", body: payload }),
   getWorkspace: (id: string) => apiRequest<WorkspaceDetail>(`/workspaces/${id}`),
+  /** Persist conversation turns. Persistence only — this never calls the model.
+   *  Saving is what broadcasts "conversations" to every connected device. */
+  appendWorkspaceTurns: (id: string, turns: { role: string; content: string; ts?: string }[]) =>
+    apiRequest<{ id: string; added: number; messages: unknown[] }>(`/workspaces/${id}/turns`, {
+      method: "POST",
+      body: { turns },
+    }),
   updateWorkspace: (id: string, payload: { title?: string; status?: string }) =>
     apiRequest<WorkspaceDetail>(`/workspaces/${id}`, { method: "PATCH", body: payload }),
   deleteWorkspace: (id: string) => apiRequest<void>(`/workspaces/${id}`, { method: "DELETE" }),

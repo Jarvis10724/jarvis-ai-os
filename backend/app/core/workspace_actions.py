@@ -95,6 +95,28 @@ def _state_prompt(schema: dict[str, str]) -> str:
 
 
 WORKSPACE_ACTIONS: dict[str, WorkspaceAction] = {
+    # The Ask Jarvis thread. It is a real workspace session like any other, which
+    # is the whole point of adding it here: conversation history then lives in
+    # WorkspaceSession.messages_json — owned by the backend, scoped by owner and
+    # company, and already broadcast as the "conversations" kind by
+    # app.db.sync_hooks. No new table, no new sync path.
+    #
+    # No stages and no state_schema: this is a conversation, not a studio
+    # deliverable, so it renders as a thread rather than structured panels. The
+    # system_prompt is unused — the command router supplies its own persona —
+    # but the field is required, so it states that plainly rather than sitting
+    # empty and looking like an oversight.
+    "chat": WorkspaceAction(
+        key="chat",
+        label="Ask Jarvis",
+        system_prompt=(
+            "Unused. The Ask Jarvis thread is driven by app.core.command_center_service "
+            "and the persona selected in the client; this workspace exists to give that "
+            "conversation a shared, backend-owned home."
+        ),
+        memory_noun="conversation",
+        memory_kind="conversation",
+    ),
     "web_builder": WorkspaceAction(
         key="web_builder",
         label="Website Studio",

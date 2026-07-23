@@ -146,51 +146,146 @@ export async function routeAndExecute(request: string, opts: RouteOptions): Prom
  * interface, so speaking and typing continue the SAME conversation.
  * ------------------------------------------------------------------ */
 
+/**
+ * The thread lives in the BACKEND, not in this browser.
+ *
+ * It used to be a localStorage key per workspace, which meant a Mac and an
+ * iPhone held genuinely different histories for the same conversation. It is
+ * now a `chat` WorkspaceSession: stored once, scoped by owner and company, and
+ * broadcast as the "conversations" kind by the existing sync architecture — no
+ * second sync path, no polling.
+ *
+ * localStorage keeps exactly two things, neither of them a source of truth:
+ *   * a migration-complete marker, so the one-time upload runs once;
+ *   * which thread THIS device has open, because conversation selection is
+ *     deliberately per-device — opening a different conversation on the phone
+ *     must not yank the Mac's screen to a different conversation.
+ */
+
+/** Legacy key. Read once during migration, then never written again. */
 export function threadKey(companyId: string | null): string {
   return `jarvis_core_thread_${companyId ?? "global"}`;
 }
 
-export function loadThread(companyId: string | null): CommandMessage[] {
+const migratedKey = (companyId: string | null) => `jarvis_thread_migrated_${companyId ?? "global"}`;
+/** Per-device selection — which thread this screen has open. Not shared. */
+const selectedKey = (companyId: string | null) => `jarvis_thread_selected_${companyId ?? "global"}`;
+
+/** In-memory render cache. Disposable: every load refetches from the backend. */
+const cache = new Map<string, CommandMessage[]>();
+
+export function cachedThread(companyId: string | null): CommandMessage[] {
+  return cache.get(companyId ?? "global") ?? [];
+}
+
+function toMessages(raw: unknown): CommandMessage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === "object")
+    .map((m) => ({
+      role: (m.role === "assistant" ? "assistant" : "user") as CommandMessage["role"],
+      content: String(m.content ?? ""),
+      toolCalls: m.toolCalls as CommandMessage["toolCalls"],
+      decision: m.decision as CommandMessage["decision"],
+    }));
+}
+
+/** The backend thread for this workspace, creating it on first use. */
+export async function ensureThreadId(companyId: string | null): Promise<string | null> {
+  const remembered = localStorage.getItem(selectedKey(companyId));
+  if (remembered) return remembered;
   try {
-    const saved = localStorage.getItem(threadKey(companyId));
-    return saved ? (JSON.parse(saved) as CommandMessage[]) : [];
+    const existing = await api.listWorkspaces({ companyId: companyId ?? "none", action: "chat" });
+    const found = existing.find((s) => s.action === "chat");
+    const id = found ? found.id : (await api.createWorkspace({ action: "chat", company_id: companyId })).id;
+    localStorage.setItem(selectedKey(companyId), id);
+    return id;
   } catch {
-    return [];
+    return null;
   }
 }
 
-export function saveThread(companyId: string | null, messages: CommandMessage[]): void {
+/**
+ * The one-time migration of whatever this device still holds locally.
+ *
+ * Deliberately conservative: it uploads, then re-reads and confirms the backend
+ * actually has the messages before marking itself done. Local history is left
+ * untouched either way — a failed migration must never be the reason a
+ * conversation disappears. Duplicates are the backend's job (turns are
+ * deduplicated by role+content+timestamp), so both devices can safely upload
+ * overlapping history.
+ */
+async function migrateLocalHistory(companyId: string | null, threadId: string): Promise<void> {
+  if (localStorage.getItem(migratedKey(companyId))) return;
+  let local: CommandMessage[] = [];
   try {
-    localStorage.setItem(threadKey(companyId), JSON.stringify(messages.slice(-60)));
+    const raw = localStorage.getItem(threadKey(companyId));
+    local = raw ? (JSON.parse(raw) as CommandMessage[]) : [];
   } catch {
-    /* storage full / unavailable — the thread still lives in memory */
+    local = [];
+  }
+  if (local.length === 0) {
+    localStorage.setItem(migratedKey(companyId), "empty");
+    return;
+  }
+  try {
+    await api.appendWorkspaceTurns(
+      threadId,
+      local.map((m) => ({ role: m.role, content: m.content })),
+    );
+    // Verify persistence before declaring victory.
+    const stored = toMessages((await api.getWorkspace(threadId)).messages);
+    const persisted = local.every((m) => stored.some((s) => s.content === m.content && s.role === m.role));
+    if (persisted) localStorage.setItem(migratedKey(companyId), new Date().toISOString());
+    // If not persisted: no marker is written, local history stays put, and the
+    // next load tries again. Nothing is lost and nothing is claimed.
+  } catch {
+    /* Same: leave the local copy alone and retry next time. */
   }
 }
 
-export function clearThread(companyId: string | null): void {
+export async function loadThread(companyId: string | null): Promise<CommandMessage[]> {
+  const id = await ensureThreadId(companyId);
+  if (!id) return cachedThread(companyId);
+  await migrateLocalHistory(companyId, id);
   try {
-    localStorage.removeItem(threadKey(companyId));
+    const messages = toMessages((await api.getWorkspace(id)).messages);
+    cache.set(companyId ?? "global", messages);
+    return messages;
   } catch {
-    /* ignore */
+    return cachedThread(companyId);
   }
 }
 
-/** Append a completed turn to the shared thread (used by non-React surfaces). */
-export function appendTurn(
+/** Start a fresh conversation on THIS device. Shared history is not deleted. */
+export async function clearThread(companyId: string | null): Promise<void> {
+  cache.delete(companyId ?? "global");
+  try {
+    const created = await api.createWorkspace({ action: "chat", company_id: companyId });
+    localStorage.setItem(selectedKey(companyId), created.id);
+  } catch {
+    localStorage.removeItem(selectedKey(companyId));
+  }
+}
+
+/** Append a completed turn. Saving is what broadcasts it to every device. */
+export async function appendTurn(
   companyId: string | null,
   request: string,
   outcome: CommandOutcome
-): CommandMessage[] {
-  const next: CommandMessage[] = [
-    ...loadThread(companyId),
+): Promise<CommandMessage[]> {
+  const id = await ensureThreadId(companyId);
+  const turns = [
     { role: "user", content: request },
-    {
-      role: "assistant",
-      content: outcome.reply,
-      toolCalls: outcome.toolCalls,
-      decision: outcome.decision,
-    },
+    { role: "assistant", content: outcome.reply },
   ];
-  saveThread(companyId, next);
-  return next;
+  if (!id) return cachedThread(companyId);
+  try {
+    const saved = await api.appendWorkspaceTurns(id, turns);
+    const messages = toMessages(saved.messages);
+    cache.set(companyId ?? "global", messages);
+    return messages;
+  } catch {
+    return cachedThread(companyId);
+  }
 }
